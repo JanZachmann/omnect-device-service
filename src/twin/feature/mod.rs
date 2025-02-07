@@ -1,6 +1,8 @@
 use crate::twin::network;
 
-use super::{consent, factory_reset, reboot, ssh_tunnel, TwinUpdate, TwinUpdateState};
+use super::{
+    consent, factory_reset, firmware_update, reboot, ssh_tunnel, TwinUpdate, TwinUpdateState,
+};
 use anyhow::{bail, ensure, Result};
 use async_trait::async_trait;
 use azure_iot_sdk::client::DirectMethod;
@@ -29,6 +31,7 @@ pub enum Command {
     FileModified(FileCommand),
     GetSshPubKey(ssh_tunnel::GetSshPubKeyCommand),
     Interval(IntervalCommand),
+    LoadFirmwareUpdate,
     OpenSshTunnel(ssh_tunnel::OpenSshTunnelCommand),
     Reboot,
     ReloadNetwork,
@@ -49,6 +52,7 @@ impl Command {
             FileModified(cmd) => cmd.feature_id,
             GetSshPubKey(_) => TypeId::of::<ssh_tunnel::SshTunnel>(),
             Interval(cmd) => cmd.feature_id,
+            LoadFirmwareUpdate => TypeId::of::<firmware_update::FirmwareUpdate>(),
             OpenSshTunnel(_) => TypeId::of::<ssh_tunnel::SshTunnel>(),
             Reboot => TypeId::of::<reboot::Reboot>(),
             ReloadNetwork => TypeId::of::<network::Network>(),

@@ -1,9 +1,11 @@
-mod consent;
-mod factory_reset;
 pub(crate) mod feature;
 #[cfg(test)]
 #[path = "mod_test.rs"]
 mod mod_test;
+
+mod consent;
+mod factory_reset;
+mod firmware_update;
 mod modem_info;
 mod network;
 mod provisioning_config;
