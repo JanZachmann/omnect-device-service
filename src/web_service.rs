@@ -93,6 +93,8 @@ impl WebService {
                 .route("/reload-network/v1", web::post().to(Self::reload_network))
                 .route("/republish/v1", web::post().to(Self::republish))
                 .route("/status/v1", web::get().to(Self::status))
+                .route("/fwupdate/load/v1", web::put().to(Self::load_fwupdate))
+                .route("/fwupdate/run/v1", web::put().to(Self::run_fwupdate))
         });
 
         let srv = if cfg!(feature = "mock") {
@@ -224,6 +226,24 @@ impl WebService {
         HttpResponse::Ok().body(
             serde_json::to_string(&pubs.clone()).expect("cannot convert publish map to string"),
         )
+    }
+
+    async fn load_fwupdate(tx_request: web::Data<mpsc::Sender<Request>>) -> HttpResponse {
+        debug!("WebService load_fwupdate");
+
+        let (tx_reply, rx_reply) = oneshot::channel();
+        let cmd = Request {
+            command: Command::LoadFirmwareUpdate,
+            reply: tx_reply,
+        };
+
+        Self::exec_request(tx_request.as_ref(), rx_reply, cmd).await
+    }
+
+    async fn run_fwupdate(_tx_request: web::Data<mpsc::Sender<Request>>) -> HttpResponse {
+        debug!("WebService run_fwupdate");
+
+        HttpResponse::Ok().finish()
     }
 
     async fn exec_request(

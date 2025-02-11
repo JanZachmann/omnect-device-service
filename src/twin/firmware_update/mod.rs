@@ -1,27 +1,18 @@
-use super::super::systemd::networkd;
-use super::web_service;
+mod osversion;
+
 use super::{feature::*, Feature};
-use super::{systemd, systemd::unit::UnitAction};
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
-use azure_iot_sdk::client::IotMessage;
-use lazy_static::lazy_static;
 use log::{debug, error, info, warn};
-use regex::Regex;
-use serde::{de::DeserializeOwned, Deserialize};
-use serde_json::json;
+use osversion::OmnectOsVersion;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fmt::Display;
 use std::{
-    borrow::Cow,
-    cmp::Ordering,
     collections::HashMap,
-    env, fmt, fs, io,
+    env, fs,
     path::{Path, PathBuf},
-    time::Duration,
 };
 use tar::Archive;
-use tokio::{sync::mpsc::Sender, time::interval};
 
 macro_rules! update_path {
     () => {{
@@ -38,27 +29,20 @@ macro_rules! du_config_path {
     }};
 }
 
-macro_rules! sw_versions_path {
-    () => {{
-        static SW_VERSIONS_PATH_DEFAULT: &'static str = "/etc/sw-versions";
-        std::env::var("SW_VERSIONS_PATH").unwrap_or(SW_VERSIONS_PATH_DEFAULT.to_string())
-    }};
-}
-
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct UpdateId {
     provider: String,
     name: String,
     version: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UserConsentHandlerProperties {
     installed_criteria: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SWUpdateHandlerProperties {
     installed_criteria: String,
@@ -67,7 +51,7 @@ struct SWUpdateHandlerProperties {
     script_file_name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(untagged)]
 enum HandlerProperties {
@@ -75,7 +59,7 @@ enum HandlerProperties {
     SWUpdate(SWUpdateHandlerProperties),
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Step {
     #[serde(rename = "type")]
@@ -86,12 +70,12 @@ struct Step {
     handler_properties: HandlerProperties,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct Instructions {
     steps: Vec<Step>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct File {
     filename: String,
@@ -99,14 +83,14 @@ struct File {
     hashes: HashMap<String, String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct Compatibility {
     manufacturer: String,
     model: String,
     compatibilityid: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ImportManifest {
     update_id: UpdateId,
@@ -136,89 +120,6 @@ struct DeviceUpdateConfig {
     agents: Vec<Agent>,
 }
 
-struct OmnectOsVersion {
-    major: u32,
-    minor: u32,
-    patch: u32,
-    build: u32,
-}
-
-impl PartialOrd for OmnectOsVersion {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for OmnectOsVersion {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let mut order = self.major.cmp(&other.major);
-
-        if order == Ordering::Equal {
-            order = self.minor.cmp(&other.minor);
-        }
-
-        if order == Ordering::Equal {
-            order = self.patch.cmp(&other.patch);
-        }
-
-        if order == Ordering::Equal {
-            order = self.build.cmp(&other.build);
-        }
-
-        order
-    }
-}
-
-impl PartialEq for OmnectOsVersion {
-    fn eq(&self, other: &Self) -> bool {
-        self.major == other.major
-            && self.minor == other.minor
-            && self.patch == other.patch
-            && self.build == other.build
-    }
-}
-
-impl Eq for OmnectOsVersion {}
-
-impl Display for OmnectOsVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "({}, {},{}, {})",
-            self.major, self.minor, self.patch, self.build
-        )
-    }
-}
-
-impl OmnectOsVersion {
-    fn from_string(version: &str) -> Result<OmnectOsVersion> {
-        let regex = Regex::new(r#"^(\d*).(\d*).(\d*).(\d*)$"#).context("")?;
-
-        let c = regex.captures(&version).context("")?;
-
-        Ok(OmnectOsVersion {
-            major: c[1].to_string().parse().context("")?,
-            minor: c[2].to_string().parse().context("")?,
-            patch: c[3].to_string().parse().context("")?,
-            build: c[4].to_string().parse().context("")?,
-        })
-    }
-
-    fn from_sw_versions_file() -> Result<OmnectOsVersion> {
-        let sw_versions = fs::read_to_string(sw_versions_path!()).context("")?;
-        let regex = Regex::new(r#"^.* (\d*).(\d*).(\d*).(\d*)$"#).context("")?;
-
-        let c = regex.captures(&sw_versions).context("")?;
-
-        Ok(OmnectOsVersion {
-            major: c[1].to_string().parse().context("")?,
-            minor: c[2].to_string().parse().context("")?,
-            patch: c[3].to_string().parse().context("")?,
-            build: c[4].to_string().parse().context("")?,
-        })
-    }
-}
-
 #[derive(Default)]
 pub struct FirmwareUpdate {}
 
@@ -238,11 +139,9 @@ impl Feature for FirmwareUpdate {
 
     async fn command(&mut self, cmd: Command) -> CommandResult {
         match cmd {
-            Command::LoadFirmwareUpdate => self.load().await?,
+            Command::LoadFirmwareUpdate => self.load().await,
             _ => bail!("unexpected command"),
         }
-
-        Ok(None)
     }
 }
 
@@ -250,7 +149,7 @@ impl FirmwareUpdate {
     const FIRMWARE_UPDATE_VERSION: u8 = 1;
     const ID: &'static str = "firmware_update";
 
-    async fn load(&mut self) -> Result<()> {
+    async fn load(&mut self) -> CommandResult {
         // ToDo: a guard to clean update dir in case of erros
         // let guard = ...
         let du_config: DeviceUpdateConfig = Self::json_from_file(&du_config_path!())?;
@@ -362,7 +261,7 @@ impl FirmwareUpdate {
 
         info!("successfully loaded update: current version: {current_version} new version: {new_version}");
 
-        Ok(())
+        Ok(Some(serde_json::to_value(manifest).context("")?))
     }
 
     fn json_from_file<P, T>(path: P) -> Result<T>
