@@ -44,7 +44,32 @@ struct RunGuard<'a> {
 
 impl Drop for RunGuard<'_> {
     fn drop(&mut self) {
-        if !(*self.succeeded.lock().unwrap()) {}
+        let Ok(succeeded) = self.succeeded.lock() else {
+            error!("RunGuard::drop: failed to lock succeeded");
+            return;
+        };
+
+        let wdt = self.wdt.take();
+
+        if !(*succeeded) {
+            tokio::spawn(async move {
+                if let Some(wdt) = wdt {
+                    if let Err(e) = WatchdogManager::interval(wdt).await {
+                        error!("RunGuard::drop set wdt: {e}")
+                    }
+                }
+
+                if let Err(e) = systemd::unit::unit_action(
+                    IOT_HUB_DEVICE_UPDATE_SERVICE,
+                    UnitAction::Start,
+                    Duration::from_secs(30),
+                )
+                .await
+                {
+                    error!("RunGuard::drop start unit: {e}")
+                }
+            });
+        }
     }
 }
 
@@ -136,10 +161,7 @@ impl FirmwareUpdate {
         }
 
         // ensure manifest hash matches
-        ensure!(
-            manifest_sha1.eq_ignore_ascii_case(manifest_sha2.trim()),
-            ""
-        );
+        ensure!(manifest_sha1.eq_ignore_ascii_case(manifest_sha2.trim()), "");
 
         let Some(manifest_path) = manifest_path else {
             bail!("");
@@ -222,8 +244,11 @@ impl FirmwareUpdate {
             wdt,
         };
 
-        let mut s = succeeded.lock().unwrap();
-        *s = true;
+        systemd::reboot().await?;
+
+        *succeeded
+            .lock()
+            .map_err(|_| anyhow::anyhow!("run: cannot lock succeeded"))? = true;
 
         Ok(None)
     }

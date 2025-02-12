@@ -33,10 +33,10 @@ use log::{error, info, warn};
 use serde_json::json;
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook_tokio::Signals;
-use std::{any::TypeId, collections::HashMap, path::Path, sync::Mutex, time};
+use std::{any::TypeId, collections::HashMap, path::Path, time};
 use tokio::{
     select,
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, Mutex},
 };
 
 #[derive(PartialEq)]
@@ -246,7 +246,7 @@ impl Twin {
         let feature = self
             .features
             .get_mut(&cmd.feature_id())
-            .ok_or_else(|| anyhow::anyhow!("failed to get feature mutable"))?;
+            .context("handle_command: failed to get feature mutable")?;
 
         ensure!(
             feature.is_enabled(),
@@ -366,17 +366,17 @@ impl Twin {
                 biased;
 
                 Some(_) = trigger_watchdog.next() => {
-                    let _guard = guard.lock();
+                    let _guard = guard.lock().await;
                     systemd::watchdog::WatchdogManager::notify().await?;
                 },
                 _ = signals.next() => {
-                    let _guard = guard.lock();
+                    let _guard = guard.lock().await;
                     twin.shutdown(&mut rx_reported_properties, &mut rx_outgoing_message).await;
                     signals.handle().close();
                     return Ok(())
                 },
                 result = &mut client_created, if twin.client.is_none() => {
-                    let _guard = guard.lock();
+                    let _guard = guard.lock().await;
                     match result {
                         Ok(client) => {
                             info!("iothub client created");
@@ -390,7 +390,7 @@ impl Twin {
                     }
                 },
                 Some(status) = rx_connection_status.recv() => {
-                    let _guard = guard.lock();
+                    let _guard = guard.lock().await;
                     if twin.handle_connection_status(status).await? {
                         twin.reset_client_with_delay(Some(time::Duration::from_secs(1))).await;
                         client_created.set(Self::connect_iothub_client(&client_builder));
@@ -400,20 +400,20 @@ impl Twin {
                     select! (
                         // random access order in 2nd select! macro
                         Some(update_desired) = rx_twin_desired.recv() => {
-                            let _guard = guard.lock();
+                            let _guard = guard.lock().await;
                             for cmd in Command::from_desired_property(update_desired) {
                                 twin.handle_command(cmd, None).await?
                             }
                         },
                         Some(reported) = rx_reported_properties.recv() => {
-                            let _guard = guard.lock();
+                            let _guard = guard.lock().await;
                             twin.client
                                 .as_ref()
                                 .context("couldn't report properties since client not present")?
                                 .twin_report(reported)?
                         },
                         Some(direct_method) = rx_direct_method.recv() => {
-                            let _guard = guard.lock();
+                            let _guard = guard.lock().await;
                             match Command::from_direct_method(&direct_method) {
                                 Ok(cmd) => twin.handle_command(cmd, Some(direct_method.responder)).await?,
                                 Err(e) => {
@@ -426,22 +426,22 @@ impl Twin {
                             }
                         },
                         Some(message) = rx_outgoing_message.recv() => {
-                            let _guard = guard.lock();
+                            let _guard = guard.lock().await;
                             twin.client
                                 .as_ref()
                                 .context("couldn't send msg since client not present")?
                                 .send_d2c_message(message)?
                         },
                         Some(request) = rx_web_service.recv() => {
-                            let _guard = guard.lock();
+                            let _guard = guard.lock().await;
                             twin.handle_command(request.command, Some(request.reply)).await?
                         },
                         command = refresh_features.select_next_some() => {
-                            let _guard = guard.lock();
+                            let _guard = guard.lock().await;
                             let feature = twin
                                 .features
                                 .get_mut(&command.feature_id())
-                                .ok_or_else(|| anyhow::anyhow!("failed to get feature mutable"))?;
+                                .context("event stream: failed to get feature mutable")?;
 
                             ensure!(feature.is_enabled(), "event stream: feature is disabled {}", feature.name());
                             info!("event stream: {}({command:?})", feature.name());
