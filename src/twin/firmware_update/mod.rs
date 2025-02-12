@@ -1,18 +1,26 @@
 mod osversion;
+mod types;
 
 use super::{feature::*, Feature};
+use super::{
+    systemd,
+    systemd::{unit::UnitAction, watchdog::WatchdogManager},
+};
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
 use log::{debug, error, info, warn};
 use osversion::OmnectOsVersion;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
     env, fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 use tar::Archive;
+use types::{DeviceUpdateConfig, ImportManifest};
+
+static IOT_HUB_DEVICE_UPDATE_SERVICE: &str = "deviceupdate-agent.service";
 
 macro_rules! update_path {
     () => {{
@@ -29,99 +37,16 @@ macro_rules! du_config_path {
     }};
 }
 
-#[derive(Serialize, Deserialize)]
-struct UpdateId {
-    provider: String,
-    name: String,
-    version: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UserConsentHandlerProperties {
-    installed_criteria: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SWUpdateHandlerProperties {
-    installed_criteria: String,
-    swu_file_name: String,
-    arguments: String,
-    script_file_name: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(untagged)]
-enum HandlerProperties {
-    UserConsent(UserConsentHandlerProperties),
-    SWUpdate(SWUpdateHandlerProperties),
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Step {
-    #[serde(rename = "type")]
-    step_type: String,
-    description: String,
-    handler: String,
-    files: Vec<String>,
-    handler_properties: HandlerProperties,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Instructions {
-    steps: Vec<Step>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct File {
-    filename: String,
-    size_in_bytes: u64,
-    hashes: HashMap<String, String>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Compatibility {
-    manufacturer: String,
-    model: String,
-    compatibilityid: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ImportManifest {
-    update_id: UpdateId,
-    is_deployable: bool,
-    compatibility: Vec<Compatibility>,
-    instructions: Instructions,
-    files: Vec<File>,
-    created_date_time: String,
-    manifest_version: String,
-}
-
-#[derive(Deserialize)]
-struct AdditionalDeviceProperties {
-    compatibilityid: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Agent {
-    manufacturer: String,
-    model: String,
-    additional_device_properties: AdditionalDeviceProperties,
-}
-
-#[derive(Deserialize)]
-struct DeviceUpdateConfig {
-    agents: Vec<Agent>,
-}
-
 #[derive(Default)]
-pub struct FirmwareUpdate {}
+pub struct FirmwareUpdate {
+    swu_file_path: Option<String>,
+}
+
+impl Drop for FirmwareUpdate {
+    fn drop(&mut self) {
+        // ToDo: clean directory
+    }
+}
 
 #[async_trait(?Send)]
 impl Feature for FirmwareUpdate {
@@ -139,7 +64,8 @@ impl Feature for FirmwareUpdate {
 
     async fn command(&mut self, cmd: Command) -> CommandResult {
         match cmd {
-            Command::LoadFirmwareUpdate => self.load().await,
+            Command::LoadFirmwareUpdate => self.load(),
+            Command::RunFirmwareUpdate => self.run().await,
             _ => bail!("unexpected command"),
         }
     }
@@ -149,9 +75,9 @@ impl FirmwareUpdate {
     const FIRMWARE_UPDATE_VERSION: u8 = 1;
     const ID: &'static str = "firmware_update";
 
-    async fn load(&mut self) -> CommandResult {
-        // ToDo: a guard to clean update dir in case of erros
-        // let guard = ...
+    fn load(&mut self) -> CommandResult {
+        self.swu_file_path = None;
+
         let du_config: DeviceUpdateConfig = Self::json_from_file(&du_config_path!())?;
         let current_version = OmnectOsVersion::from_sw_versions_file()?;
         let mut ar = Archive::new(fs::File::open(update_path!()).context("")?);
@@ -160,6 +86,8 @@ impl FirmwareUpdate {
         let mut manifest_path = None;
         let mut manifest_sha1 = String::from("");
         let mut manifest_sha2 = String::from("");
+
+        // ToDo: clean everything but update_path!() in /var/lib/omnect-device-service/local_update/
 
         for (_, file) in ar.entries().context("")?.enumerate() {
             let mut file = file.context("")?;
@@ -190,7 +118,6 @@ impl FirmwareUpdate {
                 manifest_path = Some(path.clone());
             } else if path.ends_with(".swu.importManifest.json.sha256") {
                 file.unpack(&path).context("")?;
-                // read manifest hash
                 manifest_sha2 = fs::read_to_string(path).context("")?;
             } else {
                 error!("");
@@ -261,7 +188,23 @@ impl FirmwareUpdate {
 
         info!("successfully loaded update: current version: {current_version} new version: {new_version}");
 
+        self.swu_file_path = Some(swu_path);
+
         Ok(Some(serde_json::to_value(manifest).context("")?))
+    }
+
+    async fn run(&mut self) -> CommandResult {
+        ensure!(self.swu_file_path.is_some(), "");
+
+        let saved_interval = WatchdogManager::interval(Duration::from_secs(600)).await?;
+        systemd::unit::unit_action(
+            IOT_HUB_DEVICE_UPDATE_SERVICE,
+            UnitAction::Stop,
+            Duration::from_secs(30),
+        )
+        .await?;
+
+        Ok(None)
     }
 
     fn json_from_file<P, T>(path: P) -> Result<T>
@@ -289,7 +232,7 @@ mod tests {
 
     #[test]
     fn load_ok() {
-        let mut firmware_update = FirmwareUpdate {};
+        let mut firmware_update = FirmwareUpdate::default();
         let tmp_dir = tempfile::tempdir().unwrap();
         let tar_file = tmp_dir.path().join("update.tar");
         let du_config_file = tmp_dir.path().join("du-config.json");

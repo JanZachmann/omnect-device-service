@@ -1,5 +1,6 @@
 # omnect-device-service
-**Product page: https://www.omnect.io/home**
+
+Product page: <www.omnect.io>
 
 This module serves as interface between omnect cloud and device to support certain end to end workflows:
 
@@ -36,6 +37,8 @@ This module serves as interface between omnect cloud and device to support certa
       - [Current reported network status](#current-reported-network-status)
     - [SSH Tunnel handling](#ssh-tunnel-handling)
       - [Feature availability](#feature-availability-7)
+      - [Current reported ssh tunnel feature status](#current-reported-ssh-tunnel-feature-status)
+      - [Configure the ssh certificate](#configure-the-ssh-certificate)
       - [Access to Device SSH Public Key](#access-to-device-ssh-public-key)
       - [Opening the SSH tunnel](#opening-the-ssh-tunnel)
       - [Closing the SSH tunnel](#closing-the-ssh-tunnel)

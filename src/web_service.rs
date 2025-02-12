@@ -240,10 +240,16 @@ impl WebService {
         Self::exec_request(tx_request.as_ref(), rx_reply, cmd).await
     }
 
-    async fn run_fwupdate(_tx_request: web::Data<mpsc::Sender<Request>>) -> HttpResponse {
+    async fn run_fwupdate(tx_request: web::Data<mpsc::Sender<Request>>) -> HttpResponse {
         debug!("WebService run_fwupdate");
 
-        HttpResponse::Ok().finish()
+        let (tx_reply, rx_reply) = oneshot::channel();
+        let cmd = Request {
+            command: Command::RunFirmwareUpdate,
+            reply: tx_reply,
+        };
+
+        Self::exec_request(tx_request.as_ref(), rx_reply, cmd).await
     }
 
     async fn exec_request(

@@ -78,6 +78,10 @@ impl Twin {
                 Box::new(factory_reset::FactoryReset::new()) as Box<dyn Feature>,
             ),
             (
+                TypeId::of::<firmware_update::FirmwareUpdate>(),
+                Box::new(firmware_update::FirmwareUpdate::default()) as Box<dyn Feature>,
+            ),
+            (
                 TypeId::of::<modem_info::ModemInfo>(),
                 Box::new(modem_info::ModemInfo::new()) as Box<dyn Feature>,
             ),
