@@ -68,7 +68,7 @@ impl OmnectOsVersion {
     pub fn from_string(version: &str) -> Result<OmnectOsVersion> {
         let regex = Regex::new(r#"^(\d*).(\d*).(\d*).(\d*)$"#).context("")?;
 
-        let c = regex.captures(&version).context("")?;
+        let c = regex.captures(version).context("")?;
 
         Ok(OmnectOsVersion {
             major: c[1].to_string().parse().context("")?,

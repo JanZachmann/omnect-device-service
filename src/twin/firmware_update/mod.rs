@@ -1,14 +1,15 @@
+mod adu_types;
 mod osversion;
-mod types;
 
 use super::{feature::*, Feature};
 use super::{
     systemd,
     systemd::{unit::UnitAction, watchdog::WatchdogManager},
 };
+use adu_types::{DeviceUpdateConfig, ImportManifest};
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
-use log::{debug, error, info, warn};
+use log::{error, info};
 use osversion::OmnectOsVersion;
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -18,7 +19,6 @@ use std::{
     time::Duration,
 };
 use tar::Archive;
-use types::{DeviceUpdateConfig, ImportManifest};
 
 static IOT_HUB_DEVICE_UPDATE_SERVICE: &str = "deviceupdate-agent.service";
 
@@ -35,6 +35,17 @@ macro_rules! du_config_path {
         static DEVICE_UPDATE_PATH_DEFAULT: &'static str = "/etc/adu/du-config.json";
         std::env::var("DEVICE_UPDATE_PATH").unwrap_or(DEVICE_UPDATE_PATH_DEFAULT.to_string())
     }};
+}
+
+struct RunGuard<'a> {
+    succeeded: &'a std::sync::Mutex<bool>,
+    wdt: Option<Duration>,
+}
+
+impl Drop for RunGuard<'_> {
+    fn drop(&mut self) {
+        if !(*self.succeeded.lock().unwrap()) {}
+    }
 }
 
 #[derive(Default)]
@@ -89,7 +100,7 @@ impl FirmwareUpdate {
 
         // ToDo: clean everything but update_path!() in /var/lib/omnect-device-service/local_update/
 
-        for (_, file) in ar.entries().context("")?.enumerate() {
+        for file in ar.entries().context("")? {
             let mut file = file.context("")?;
             let path = file.path().context("")?;
 
@@ -126,7 +137,7 @@ impl FirmwareUpdate {
 
         // ensure manifest hash matches
         ensure!(
-            manifest_sha1.eq_ignore_ascii_case(&manifest_sha2.trim()),
+            manifest_sha1.eq_ignore_ascii_case(manifest_sha2.trim()),
             ""
         );
 
@@ -156,7 +167,7 @@ impl FirmwareUpdate {
         };
 
         ensure!(
-            file.hashes["sha256"].eq_ignore_ascii_case(&swu_sha.trim()),
+            file.hashes["sha256"].eq_ignore_ascii_case(swu_sha.trim()),
             ""
         );
 
@@ -194,15 +205,25 @@ impl FirmwareUpdate {
     }
 
     async fn run(&mut self) -> CommandResult {
-        ensure!(self.swu_file_path.is_some(), "");
+        ensure!(self.swu_file_path.is_some(), "no update loaded");
 
-        let saved_interval = WatchdogManager::interval(Duration::from_secs(600)).await?;
+        let succeeded = std::sync::Mutex::new(false);
+
+        let wdt = WatchdogManager::interval(Duration::from_secs(600)).await?;
         systemd::unit::unit_action(
             IOT_HUB_DEVICE_UPDATE_SERVICE,
             UnitAction::Stop,
             Duration::from_secs(30),
         )
         .await?;
+
+        let _guard = RunGuard {
+            succeeded: &succeeded,
+            wdt,
+        };
+
+        let mut s = succeeded.lock().unwrap();
+        *s = true;
 
         Ok(None)
     }
