@@ -1,7 +1,7 @@
 mod adu_types;
 mod osversion;
 
-use super::{feature::*, Feature};
+use super::{feature::*, system_info::*, Feature};
 use super::{
     systemd,
     systemd::{unit::UnitAction, watchdog::WatchdogManager},
@@ -242,6 +242,11 @@ impl FirmwareUpdate {
         let _guard = RunGuard {
             succeeded: &succeeded,
             wdt,
+        };
+
+        let target_root = match RootPartition::current()? {
+            RootPartition::A => RootPartition::B,
+            RootPartition::B => RootPartition::A,
         };
 
         systemd::reboot().await?;

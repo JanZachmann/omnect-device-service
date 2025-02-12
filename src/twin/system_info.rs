@@ -31,6 +31,41 @@ lazy_static! {
     };
 }
 
+pub enum RootPartition {
+    A,
+    B,
+}
+
+impl RootPartition {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::A => "a",
+            Self::B => "b",
+        }
+    }
+
+    pub fn current() -> Result<RootPartition> {
+        let current_root = fs::read_link(DEV_OMNECT.to_owned() + "rootCurrent")
+            .context("current_root: getting current root device")?;
+
+        if current_root
+            == fs::read_link(DEV_OMNECT.to_owned() + "rootA")
+                .context("current_root: getting rootA")?
+        {
+            return Ok(RootPartition::A);
+        }
+
+        if current_root
+            == fs::read_link(DEV_OMNECT.to_owned() + "rootB")
+                .context("current_root: getting rootB")?
+        {
+            return Ok(RootPartition::B);
+        }
+
+        bail!("current_root: device booted from unknown root")
+    }
+}
+
 #[derive(Serialize)]
 struct Label {
     device_id: String,
@@ -374,27 +409,6 @@ impl SystemInfo {
         info!("metrics: telemetry message transmitted");
 
         Ok(())
-    }
-
-    pub fn current_root() -> Result<&'static str> {
-        let current_root = fs::read_link(DEV_OMNECT.to_owned() + "rootCurrent")
-            .context("current_root: getting current root device")?;
-
-        if current_root
-            == fs::read_link(DEV_OMNECT.to_owned() + "rootA")
-                .context("current_root: getting rootA")?
-        {
-            return Ok("a");
-        }
-
-        if current_root
-            == fs::read_link(DEV_OMNECT.to_owned() + "rootB")
-                .context("current_root: getting rootB")?
-        {
-            return Ok("b");
-        }
-
-        bail!("current_root: device booted from unknown root")
     }
 
     pub fn bootloader_updated() -> bool {

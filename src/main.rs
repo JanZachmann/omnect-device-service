@@ -9,7 +9,10 @@ use azure_iot_sdk::client::*;
 use env_logger::{Builder, Env, Target};
 use log::{error, info};
 use std::{io::Write, process};
-use twin::{system_info::SystemInfo, Twin};
+use twin::{
+    system_info::{RootPartition, SystemInfo},
+    Twin,
+};
 
 #[tokio::main]
 async fn main() {
@@ -70,6 +73,9 @@ fn infos() -> Result<()> {
         "bootloader was updated: {}",
         SystemInfo::bootloader_updated()
     );
-    info!("device booted from root {}.", SystemInfo::current_root()?);
+    info!(
+        "device booted from root {}.",
+        RootPartition::current()?.as_str()
+    );
     Ok(())
 }
