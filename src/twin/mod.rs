@@ -23,7 +23,7 @@ cfg_if::cfg_if! {
     }
 }
 
-use crate::{systemd, update_validation, web_service};
+use crate::{bootloader_env, systemd, update_validation, web_service};
 use anyhow::{ensure, Context, Result};
 use azure_iot_sdk::client::*;
 use dotenvy;
