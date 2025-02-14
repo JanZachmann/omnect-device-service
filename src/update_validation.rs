@@ -3,14 +3,24 @@ use crate::{
 };
 use anyhow::{bail, ensure, Context, Result};
 use log::{debug, error, info};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::{serde_as, DurationMilliSeconds};
-use std::{env, fs, fs::OpenOptions, path::Path};
+use std::{env, fs, path::Path};
 use tokio::{
     sync::oneshot,
     task::JoinHandle,
     time::{timeout, Duration},
 };
+
+#[macro_export]
+macro_rules! update_validation_config_path {
+    () => {{
+        static UPDATE_VALIDATION_CONFIG_PATH_DEFAULT: &'static str =
+            "/var/lib/omnect-device-service/update_validation_conf.json";
+        std::env::var("UPDATE_VALIDATION_CONFIG_PATH")
+            .unwrap_or(UPDATE_VALIDATION_CONFIG_PATH_DEFAULT.to_string())
+    }};
+}
 
 // this file is used to detect if we have to validate an update
 static UPDATE_VALIDATION_FILE: &str = "/run/omnect-device-service/omnect_validate_update";
@@ -20,6 +30,11 @@ static UPDATE_VALIDATION_COMPLETE_BARRIER_FILE: &str =
 static IOT_HUB_DEVICE_UPDATE_SERVICE: &str = "deviceupdate-agent.service";
 static UPDATE_VALIDATION_TIMEOUT_IN_SECS: u64 = 300;
 
+#[derive(Default, Deserialize, Serialize)]
+pub struct UpdateValidationConfig {
+    pub local: bool,
+}
+
 #[serde_as]
 #[derive(Default, Deserialize, Serialize)]
 pub struct UpdateValidation {
@@ -28,6 +43,7 @@ pub struct UpdateValidation {
     start_monotonic_time: Duration,
     restart_count: u8,
     authenticated: bool,
+    local_update: bool,
     #[serde(skip)]
     run_update_validation: bool,
     #[serde(skip)]
@@ -53,33 +69,11 @@ impl UpdateValidation {
 
         if let Ok(true) = Path::new(UPDATE_VALIDATION_COMPLETE_BARRIER_FILE).try_exists() {
             // we detected update validation before, but were not validated before
-            new_self = serde_json::from_reader(
-                OpenOptions::new()
-                    .read(true)
-                    .create(false)
-                    .open(UPDATE_VALIDATION_COMPLETE_BARRIER_FILE)
-                    .context(format!(
-                        "retry read of {UPDATE_VALIDATION_COMPLETE_BARRIER_FILE}"
-                    ))?,
-            )
-            .context(format!(
-                "deserializing of UpdateValidation from {UPDATE_VALIDATION_COMPLETE_BARRIER_FILE}"
-            ))?;
+            new_self = Self::json_from_file(UPDATE_VALIDATION_COMPLETE_BARRIER_FILE)?;
             new_self.restart_count += 1;
             info!("retry start ({})", new_self.restart_count);
-            serde_json::to_writer_pretty(
-                OpenOptions::new()
-                    .write(true)
-                    .create(false)
-                    .truncate(true)
-                    .open(UPDATE_VALIDATION_COMPLETE_BARRIER_FILE)
-                    .context(format!("retry write of {UPDATE_VALIDATION_COMPLETE_BARRIER_FILE}"))?,
-                    &new_self,
-            )
-            .context(
-                format!("retry serializing of UpdateValidation to {UPDATE_VALIDATION_COMPLETE_BARRIER_FILE}"),
-            )?;
-            let now = std::time::Duration::from(nix::time::clock_gettime(
+            Self::json_to_file(&new_self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, false)?;
+            let now = Duration::from(nix::time::clock_gettime(
                 nix::time::ClockId::CLOCK_MONOTONIC,
             )?);
             new_self.validation_timeout =
@@ -87,22 +81,19 @@ impl UpdateValidation {
             new_self.run_update_validation = true;
         } else if let Ok(true) = Path::new(UPDATE_VALIDATION_FILE).try_exists() {
             info!("first start");
-            new_self.start_monotonic_time = std::time::Duration::from(nix::time::clock_gettime(
+            new_self.start_monotonic_time = Duration::from(nix::time::clock_gettime(
                 nix::time::ClockId::CLOCK_MONOTONIC,
             )?);
 
-            serde_json::to_writer_pretty(
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(UPDATE_VALIDATION_COMPLETE_BARRIER_FILE)
-                    .context(format!("first write of {UPDATE_VALIDATION_COMPLETE_BARRIER_FILE}"))?,
-                &new_self,
-            )
-            .context(
-                format!("first serializing of UpdateValidation to {UPDATE_VALIDATION_COMPLETE_BARRIER_FILE}"),
-            )?;
+            // check if there is an update validation config
+            if let Ok(true) = Path::new(&update_validation_config_path!()).try_exists() {
+                let config: UpdateValidationConfig =
+                    Self::json_from_file(update_validation_config_path!())?;
+                new_self.local_update = config.local;
+            }
+
+            Self::json_to_file(&new_self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, true)?;
+
             new_self.validation_timeout = validation_timeout;
             new_self.run_update_validation = true;
         } else {
@@ -135,34 +126,26 @@ impl UpdateValidation {
         Ok(new_self)
     }
 
-    pub async fn set_authenticated(&mut self) -> Result<()> {
-        if !self.run_update_validation {
-            return Ok(());
+    pub async fn set_authenticated(&mut self, authenticated: bool) -> Result<()> {
+        if self.run_update_validation {
+            self.authenticated = authenticated;
+            debug!(
+                "authenticated: {}, local update: {}",
+                self.authenticated, self.local_update
+            );
+
+            if self.local_update || self.authenticated {
+                Self::json_to_file(&self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, false)?;
+                // for now start validation blocking twin::init - maybe we want an successful twin::init as part of validation at some point?
+                return self.check().await;
+            }
         }
-
-        self.authenticated = true;
-        debug!("status set to \"authenticated\"");
-
-        serde_json::to_writer_pretty(
-            OpenOptions::new()
-                .write(true)
-                .create(false)
-                .truncate(true)
-                .open(UPDATE_VALIDATION_COMPLETE_BARRIER_FILE)
-                .context(format!("authenticated: write of {UPDATE_VALIDATION_COMPLETE_BARRIER_FILE}"))?,
-            &self,
-        )
-        .context(
-            format!("authenticated: serializing of UpdateValidation to {UPDATE_VALIDATION_COMPLETE_BARRIER_FILE}"),
-        )?;
-
-        // for now start validation blocking twin::init - maybe we want an successful twin::init as part of validation at some point?
-        self.check().await
+        Ok(())
     }
 
     async fn validate(&mut self) -> Result<()> {
         debug!("started");
-        let now = std::time::Duration::from(nix::time::clock_gettime(
+        let now = Duration::from(nix::time::clock_gettime(
             nix::time::ClockId::CLOCK_MONOTONIC,
         )?);
         let timeout = self.validation_timeout - (now - self.start_monotonic_time);
@@ -177,7 +160,7 @@ impl UpdateValidation {
         debug!("starting deviceupdate-agent.service");
         fs::remove_file(UPDATE_VALIDATION_FILE).context("remove UPDATE_VALIDATION_FILE")?;
 
-        let now = std::time::Duration::from(nix::time::clock_gettime(
+        let now = Duration::from(nix::time::clock_gettime(
             nix::time::ClockId::CLOCK_MONOTONIC,
         )?);
         let timeout = self.validation_timeout - (now - self.start_monotonic_time);
@@ -203,6 +186,9 @@ impl UpdateValidation {
         fs::remove_file(UPDATE_VALIDATION_COMPLETE_BARRIER_FILE).context(format!(
             "update validation: remove {UPDATE_VALIDATION_COMPLETE_BARRIER_FILE}"
         ))?;
+
+        let _ = fs::remove_file(update_validation_config_path!());
+
         // cancel update validation reboot timer
         if let Err(e) = self.tx.take().unwrap().send(()) {
             error!(
@@ -232,5 +218,39 @@ impl UpdateValidation {
         }
 
         Ok(())
+    }
+
+    fn json_to_file<T, P>(value: &T, path: P, create: bool) -> Result<()>
+    where
+        T: ?Sized + Serialize,
+        P: AsRef<Path>,
+        P: std::fmt::Display,
+    {
+        serde_json::to_writer_pretty(
+            fs::OpenOptions::new()
+                .write(true)
+                .create(create)
+                .truncate(true)
+                .open(&path)
+                .context(format!("failed to open for write: {path}"))?,
+            value,
+        )
+        .context(format!("failed to write to: {path}"))
+    }
+
+    fn json_from_file<P, T>(path: P) -> Result<T>
+    where
+        P: AsRef<Path>,
+        P: std::fmt::Display,
+        T: DeserializeOwned,
+    {
+        serde_json::from_reader(
+            fs::OpenOptions::new()
+                .read(true)
+                .create(false)
+                .open(&path)
+                .context(format!("failed to open for read: {path}"))?,
+        )
+        .context(format!("failed to read from: {path}"))
     }
 }

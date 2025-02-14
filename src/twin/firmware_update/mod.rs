@@ -1,13 +1,13 @@
 mod adu_types;
 mod osversion;
 
-use super::{
+use crate::{
     bootloader_env,
-    feature::*,
-    system_info::*,
     systemd,
     systemd::{unit::UnitAction, watchdog::WatchdogManager},
-    Feature,
+    twin::{feature::*, system_info::RootPartition, Feature},
+    update_validation::UpdateValidationConfig,
+    update_validation_config_path,
 };
 use adu_types::{DeviceUpdateConfig, ImportManifest};
 use anyhow::{bail, ensure, Context, Result};
@@ -331,6 +331,25 @@ impl FirmwareUpdate {
 
             bootloader_env::set("omnect_validate_update_part", params.2)?;
         }
+
+        let update_validation_conf = UpdateValidationConfig { local: true };
+
+        serde_json::to_writer_pretty(
+            fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(update_validation_config_path!())
+                .context(format!(
+                    "failed to open {}",
+                    update_validation_config_path!()
+                ))?,
+            &update_validation_conf,
+        )
+        .context(format!(
+            "failed to serialize to {}",
+            update_validation_config_path!()
+        ))?;
 
         systemd::reboot().await?;
 

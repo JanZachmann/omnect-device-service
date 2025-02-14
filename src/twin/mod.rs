@@ -23,7 +23,7 @@ cfg_if::cfg_if! {
     }
 }
 
-use crate::{bootloader_env, systemd, update_validation, web_service};
+use super::{systemd, update_validation, web_service};
 use anyhow::{ensure, Context, Result};
 use azure_iot_sdk::client::*;
 use dotenvy;
@@ -186,7 +186,7 @@ impl Twin {
                          * the update validation test "wait_for_system_running" enforces that
                          * omnect-device-service already notified its own success
                          */
-                        self.update_validation.set_authenticated().await?;
+                        self.update_validation.set_authenticated(true).await?;
                     };
 
                     self.connect_twin().await?;
@@ -218,7 +218,11 @@ impl Twin {
                     | UnauthenticatedReason::ExpiredSasToken
                     | UnauthenticatedReason::NoNetwork
                     | UnauthenticatedReason::Unknown => {
-                        info!("Failed to connect to iothub: {reason:?}")
+                        info!("Failed to connect to iothub: {reason:?}");
+
+                        if self.state == TwinState::Uninitialized {
+                            self.update_validation.set_authenticated(false).await?;
+                        };
                     }
                     UnauthenticatedReason::DeviceDisabled => {
                         warn!("Failed to connect to iothub: {reason:?}")
