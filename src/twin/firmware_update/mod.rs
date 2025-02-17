@@ -1,6 +1,6 @@
 mod adu_types;
 mod common;
-mod osversion;
+mod os_version;
 pub mod update_validation;
 
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
     systemd::{unit::UnitAction, watchdog::WatchdogManager},
     twin::{
         feature::*,
-        firmware_update::{adu_types::*, common::*, osversion::*},
+        firmware_update::{adu_types::*, common::*, os_version::*},
         system_info::RootPartition,
         Feature,
     },
