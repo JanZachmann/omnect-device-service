@@ -44,6 +44,42 @@ impl RootPartition {
         }
     }
 
+    pub fn from_index_string(index: String) -> Result<Self> {
+        match index
+            .parse::<u8>()
+            .context("cannot parse root partition index")?
+        {
+            2 => Ok(Self::A),
+            3 => Ok(Self::B),
+            _ => bail!("invalid root partition index"),
+        }
+    }
+
+    pub fn index(&self) -> u8 {
+        match self {
+            Self::A => 2,
+            Self::B => 3,
+        }
+    }
+
+    pub fn root_update_params(&self) -> &str {
+        match self {
+            Self::A => "stable,copy1",
+            Self::B => "stable,copy2",
+        }
+    }
+
+    pub fn bootloader_update_params(&self) -> &str {
+        "stable,bootloader"
+    }
+
+    pub fn other(&self) -> Self {
+        match self {
+            Self::A => Self::B,
+            Self::B => Self::A,
+        }
+    }
+
     pub fn current() -> Result<RootPartition> {
         let current_root = fs::read_link(DEV_OMNECT.to_owned() + "rootCurrent")
             .context("current_root: getting current root device")?;

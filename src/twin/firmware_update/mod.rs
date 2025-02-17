@@ -2,8 +2,7 @@ mod adu_types;
 mod osversion;
 
 use crate::{
-    bootloader_env,
-    systemd,
+    bootloader_env, systemd,
     systemd::{unit::UnitAction, watchdog::WatchdogManager},
     twin::{feature::*, system_info::RootPartition, Feature},
     update_validation::UpdateValidationConfig,
@@ -289,21 +288,18 @@ impl FirmwareUpdate {
             bail!("no update loaded")
         };
 
-        let params = match RootPartition::current()? {
-            RootPartition::A => ("stable,copy2", "stable,bootloader", "3"),
-            RootPartition::B => ("stable,copy1", "stable,bootloader", "2"),
-        };
+        let target_partition = RootPartition::current()?.other();
 
         let mut guard = RunGuard::new().await?;
 
-        Self::swupdate(swu_file_path, params.0).context(format!(
+        Self::swupdate(swu_file_path, target_partition.root_update_params()).context(format!(
             "failed to update root partition: swupdate logs at {}",
             log_file_path!()
         ))?;
 
         let _ = fs::remove_file(no_bootloader_updated_file_path!());
 
-        if Self::swupdate(swu_file_path, params.1).is_ok() {
+        if Self::swupdate(swu_file_path, target_partition.bootloader_update_params()).is_ok() {
             ensure!(
                 Path::new(&bootloader_updated_file_path!())
                     .try_exists()
@@ -316,7 +312,7 @@ impl FirmwareUpdate {
             );
 
             bootloader_env::set("omnect_bootloader_updated", "1")?;
-            bootloader_env::set("omnect_os_bootpart", params.2)?;
+            bootloader_env::set("omnect_os_bootpart", &target_partition.index().to_string())?;
         } else {
             ensure!(
                 Path::new(&no_bootloader_updated_file_path!())
@@ -329,7 +325,10 @@ impl FirmwareUpdate {
                 )
             );
 
-            bootloader_env::set("omnect_validate_update_part", params.2)?;
+            bootloader_env::set(
+                "omnect_validate_update_part",
+                &target_partition.index().to_string(),
+            )?;
         }
 
         let update_validation_conf = UpdateValidationConfig { local: true };

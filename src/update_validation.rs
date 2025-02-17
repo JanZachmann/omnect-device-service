@@ -1,7 +1,9 @@
 use crate::{
-    bootloader_env, systemd, systemd::unit::UnitAction, systemd::watchdog::WatchdogManager,
+    bootloader_env,
+    systemd::{self, unit::UnitAction, watchdog::WatchdogManager},
+    twin::system_info::RootPartition,
 };
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{bail, Context, Result};
 use log::{debug, error, info};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::{serde_as, DurationMilliSeconds};
@@ -174,12 +176,13 @@ impl UpdateValidation {
     }
 
     async fn finalize(&mut self) -> Result<()> {
-        let omnect_validate_update_part = bootloader_env::get("omnect_validate_update_part")?;
-        ensure!(
-            !omnect_validate_update_part.is_empty(),
-            "update validation: omnect_validate_update_part not set"
-        );
-        bootloader_env::set("omnect_os_bootpart", omnect_validate_update_part.as_str())?;
+        let omnect_validate_update_part =
+            RootPartition::from_index_string(bootloader_env::get("omnect_validate_update_part")?)?;
+
+        bootloader_env::set(
+            "omnect_os_bootpart",
+            &omnect_validate_update_part.index().to_string(),
+        )?;
         bootloader_env::unset("omnect_validate_update")?;
         bootloader_env::unset("omnect_validate_update_part")?;
 
@@ -200,7 +203,7 @@ impl UpdateValidation {
         Ok(())
     }
 
-    pub async fn check(&mut self) -> Result<()> {
+    async fn check(&mut self) -> Result<()> {
         // prolong watchdog interval for update validation phase
         let saved_interval = WatchdogManager::interval(self.validation_timeout).await?;
 
