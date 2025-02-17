@@ -289,7 +289,7 @@ impl WebService {
                 HttpResponse::Ok().finish()
             }
             Err(e) => {
-                error!("execute request: request failed {e}");
+                error!("execute request: request failed with: {e}");
                 HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).body(e.to_string())
             }
         }

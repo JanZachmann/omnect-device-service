@@ -66,9 +66,11 @@ impl Display for OmnectOsVersion {
 
 impl OmnectOsVersion {
     pub fn from_string(version: &str) -> Result<OmnectOsVersion> {
-        let regex = Regex::new(r#"^(\d*).(\d*).(\d*).(\d*)$"#).context("failed to create regex")?;
+        let regex = Regex::new(r#"^(\d*).(\d*).(\d*).(\d*)"#).context("failed to create regex")?;
 
-        let c = regex.captures(version).context("failed to create captures")?;
+        let c = regex
+            .captures(version)
+            .context("failed to create captures")?;
 
         Ok(OmnectOsVersion {
             major: c[1].to_string().parse().context("failed to parse major")?,
@@ -79,10 +81,14 @@ impl OmnectOsVersion {
     }
 
     pub fn from_sw_versions_file() -> Result<OmnectOsVersion> {
-        let sw_versions = fs::read_to_string(sw_versions_path!()).context("failed to read sw-versions file")?;
-        let regex = Regex::new(r#"^.* (\d*).(\d*).(\d*).(\d*)$"#).context("failed to create regex")?;
+        let sw_versions =
+            fs::read_to_string(sw_versions_path!()).context("failed to read sw-versions file")?;
+        let regex =
+            Regex::new(r#"^.* (\d*).(\d*).(\d*).(\d*)"#).context("failed to create regex")?;
 
-        let c = regex.captures(&sw_versions).context("failed to create captures")?;
+        let c = regex
+            .captures(&sw_versions)
+            .context("failed to create captures")?;
 
         Ok(OmnectOsVersion {
             major: c[1].to_string().parse().context("failed to parse major")?,
@@ -122,6 +128,13 @@ mod tests {
         assert!(
             OmnectOsVersion::from_string("2.1.2.3").unwrap()
                 > OmnectOsVersion::from_string("1.1.2.3").unwrap()
+        );
+
+        std::env::set_var("SW_VERSIONS_PATH", "testfiles/positive/sw-versions");
+
+        assert!(
+            OmnectOsVersion::from_sw_versions_file().unwrap()
+                == OmnectOsVersion::from_string("4.0.10.0").unwrap()
         );
     }
 }
