@@ -89,12 +89,12 @@ impl WebService {
             App::new()
                 .app_data(web::Data::new(tx_request.clone()))
                 .route("/factory-reset/v1", web::post().to(Self::factory_reset))
+                .route("/fwupdate/load/v1", web::post().to(Self::load_fwupdate))
+                .route("/fwupdate/run/v1", web::post().to(Self::run_fwupdate))
                 .route("/reboot/v1", web::post().to(Self::reboot))
                 .route("/reload-network/v1", web::post().to(Self::reload_network))
                 .route("/republish/v1", web::post().to(Self::republish))
                 .route("/status/v1", web::get().to(Self::status))
-                .route("/fwupdate/load/v1", web::put().to(Self::load_fwupdate))
-                .route("/fwupdate/run/v1", web::put().to(Self::run_fwupdate))
         });
 
         let srv = if cfg!(feature = "mock") {
