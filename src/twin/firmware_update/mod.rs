@@ -102,7 +102,7 @@ impl Feature for FirmwareUpdate {
     }
 
     fn is_enabled(&self) -> bool {
-        env::var("SUPPRESS_NETWORK_STATUS") != Ok("true".to_string())
+        env::var("SUPPRESS_FIRMWARE_UPDATE") != Ok("true".to_string())
     }
 
     async fn command(&mut self, cmd: Command) -> CommandResult {

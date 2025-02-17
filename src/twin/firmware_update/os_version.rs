@@ -92,3 +92,36 @@ impl OmnectOsVersion {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test() {
+        assert!(
+            OmnectOsVersion::from_string("0.1.2.3").unwrap()
+                == OmnectOsVersion::from_string("0.1.2.3").unwrap()
+        );
+        assert!(
+            OmnectOsVersion::from_string("0.1.2.3").unwrap()
+                < OmnectOsVersion::from_string("0.1.2.4").unwrap()
+        );
+        assert!(
+            OmnectOsVersion::from_string("0.1.2.3").unwrap()
+                < OmnectOsVersion::from_string("0.1.3.3").unwrap()
+        );
+        assert!(
+            OmnectOsVersion::from_string("0.1.2.3").unwrap()
+                < OmnectOsVersion::from_string("0.2.2.3").unwrap()
+        );
+        assert!(
+            OmnectOsVersion::from_string("0.1.2.3").unwrap()
+                < OmnectOsVersion::from_string("1.1.2.3").unwrap()
+        );
+        assert!(
+            OmnectOsVersion::from_string("2.1.2.3").unwrap()
+                > OmnectOsVersion::from_string("1.1.2.3").unwrap()
+        );
+    }
+}

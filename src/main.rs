@@ -3,7 +3,6 @@ pub mod systemd;
 pub mod twin;
 pub mod web_service;
 
-use azure_iot_sdk::client::*;
 use env_logger::{Builder, Env, Target};
 use log::{error, info};
 use std::{io::Write, process};
@@ -40,13 +39,6 @@ async fn main() {
     });
 
     builder.target(Target::Stdout).init();
-
-    info!(
-        "module version: {} ({})",
-        env!("CARGO_PKG_VERSION"),
-        env!("GIT_SHORT_REV")
-    );
-    info!("azure sdk version: {}", IotHubClient::sdk_version_string());
 
     if let Err(e) = Twin::run().await {
         error!("application error: {e:#}");

@@ -9,7 +9,6 @@ use log::{debug, info, warn};
 use serde::Serialize;
 use serde_json::json;
 use std::env;
-use std::fs;
 use std::path::Path;
 use sysinfo;
 use time::format_description::well_known::Rfc3339;
@@ -19,7 +18,6 @@ use tokio::{
 };
 
 static BOOTLOADER_UPDATED_FILE: &str = "/run/omnect-device-service/omnect_bootloader_updated";
-static DEV_OMNECT: &str = "/dev/omnect/";
 
 lazy_static! {
     static ref REFRESH_SYSTEM_INFO_INTERVAL_SECS: u64 = {
@@ -80,25 +78,33 @@ impl RootPartition {
         }
     }
 
+    #[cfg(not(feature = "mock"))]
     pub fn current() -> Result<RootPartition> {
-        let current_root = fs::read_link(DEV_OMNECT.to_owned() + "rootCurrent")
+        static DEV_OMNECT: &str = "/dev/omnect/";
+
+        let current_root = std::fs::read_link(DEV_OMNECT.to_owned() + "rootCurrent")
             .context("current_root: getting current root device")?;
 
         if current_root
-            == fs::read_link(DEV_OMNECT.to_owned() + "rootA")
+            == std::fs::read_link(DEV_OMNECT.to_owned() + "rootA")
                 .context("current_root: getting rootA")?
         {
             return Ok(RootPartition::A);
         }
 
         if current_root
-            == fs::read_link(DEV_OMNECT.to_owned() + "rootB")
+            == std::fs::read_link(DEV_OMNECT.to_owned() + "rootB")
                 .context("current_root: getting rootB")?
         {
             return Ok(RootPartition::B);
         }
 
         bail!("current_root: device booted from unknown root")
+    }
+
+    #[cfg(feature = "mock")]
+    pub fn current() -> Result<RootPartition> {
+        Ok(RootPartition::A)
     }
 }
 
@@ -249,6 +255,14 @@ impl SystemInfo {
     const ID: &'static str = "system_info";
 
     pub fn new() -> Result<Self> {
+        let azure_sdk_version = IotHubClient::sdk_version_string();
+        let omnect_device_service_version = env!("CARGO_PKG_VERSION").to_string();
+
+        info!(
+            "module version: {omnect_device_service_version} ({})",
+            env!("GIT_SHORT_REV")
+        );
+        info!("azure sdk version: {azure_sdk_version}");
         info!(
             "bootloader was updated: {}",
             SystemInfo::bootloader_updated()
@@ -257,7 +271,7 @@ impl SystemInfo {
             "device booted from root {}.",
             RootPartition::current()?.as_str()
         );
-        
+
         let boot_time = if matches!(TIMESYNC_FILE.try_exists(), Ok(true)) {
             Some(Self::boot_time()?)
         } else {
@@ -274,8 +288,8 @@ impl SystemInfo {
             tx_outgoing_message: None,
             software_info: SoftwareInfo {
                 os: Self::os_info()?,
-                azure_sdk_version: IotHubClient::sdk_version_string(),
-                omnect_device_service_version: env!("CARGO_PKG_VERSION").to_string(),
+                azure_sdk_version,
+                omnect_device_service_version,
                 boot_time,
             },
             hardware_info: HardwareInfo {
