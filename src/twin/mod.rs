@@ -23,11 +23,12 @@ cfg_if::cfg_if! {
     }
 }
 
-use super::{systemd, update_validation, web_service};
+use super::{systemd, web_service};
 use anyhow::{ensure, Context, Result};
 use azure_iot_sdk::client::*;
 use dotenvy;
 use feature::*;
+use firmware_update::update_validation::UpdateValidation;
 use futures_util::StreamExt;
 use log::{error, info, warn};
 use serde_json::json;
@@ -53,7 +54,7 @@ pub struct Twin {
     tx_outgoing_message: mpsc::Sender<IotMessage>,
     state: TwinState,
     features: HashMap<TypeId, Box<dyn Feature>>,
-    update_validation: update_validation::UpdateValidation,
+    update_validation: UpdateValidation,
 }
 
 impl Twin {
@@ -63,7 +64,7 @@ impl Twin {
         tx_outgoing_message: mpsc::Sender<IotMessage>,
     ) -> Result<Self> {
         // has to be called before iothub client authentication
-        let update_validation = update_validation::UpdateValidation::new()?;
+        let update_validation = UpdateValidation::new()?;
         let client = None;
         let web_service = web_service::WebService::run(tx_web_service.clone()).await?;
         let state = TwinState::Uninitialized;

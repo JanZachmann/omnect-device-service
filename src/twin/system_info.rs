@@ -249,6 +249,15 @@ impl SystemInfo {
     const ID: &'static str = "system_info";
 
     pub fn new() -> Result<Self> {
+        info!(
+            "bootloader was updated: {}",
+            SystemInfo::bootloader_updated()
+        );
+        info!(
+            "device booted from root {}.",
+            RootPartition::current()?.as_str()
+        );
+        
         let boot_time = if matches!(TIMESYNC_FILE.try_exists(), Ok(true)) {
             Some(Self::boot_time()?)
         } else {

@@ -1,19 +1,21 @@
 mod adu_types;
+mod common;
 mod osversion;
+pub mod update_validation;
 
 use crate::{
     bootloader_env, systemd,
     systemd::{unit::UnitAction, watchdog::WatchdogManager},
-    twin::{feature::*, system_info::RootPartition, Feature},
-    update_validation::UpdateValidationConfig,
-    update_validation_config_path,
+    twin::{
+        feature::*,
+        firmware_update::{adu_types::*, common::*, osversion::*},
+        system_info::RootPartition,
+        Feature,
+    },
 };
-use adu_types::{DeviceUpdateConfig, ImportManifest};
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
 use log::{error, info};
-use osversion::OmnectOsVersion;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -22,55 +24,6 @@ use std::{
     time::Duration,
 };
 use tar::Archive;
-
-static IOT_HUB_DEVICE_UPDATE_SERVICE: &str = "deviceupdate-agent.service";
-
-macro_rules! update_folder_path {
-    () => {{
-        static UPDATE_FOLDER_PATH_DEFAULT: &'static str =
-            "/var/lib/omnect-device-service/local_update";
-        std::env::var("UPDATE_FOLDER_PATH").unwrap_or(UPDATE_FOLDER_PATH_DEFAULT.to_string())
-    }};
-}
-
-macro_rules! du_config_path {
-    () => {{
-        static DEVICE_UPDATE_PATH_DEFAULT: &'static str = "/etc/adu/du-config.json";
-        std::env::var("DEVICE_UPDATE_PATH").unwrap_or(DEVICE_UPDATE_PATH_DEFAULT.to_string())
-    }};
-}
-
-macro_rules! log_file_path {
-    () => {{
-        static SWUPDATE_LOG_PATH_DEFAULT: &'static str = "/var/log/aduc-logs/swupdate.log";
-        std::env::var("SWUPDATE_LOG_PATH").unwrap_or(SWUPDATE_LOG_PATH_DEFAULT.to_string())
-    }};
-}
-
-#[cfg(not(feature = "mock"))]
-macro_rules! pubkey_file_path {
-    () => {{
-        static SWUPDATE_PUBKEY_PATH_DEFAULT: &'static str = "/usr/share/swupdate/public.pem";
-        std::env::var("SWUPDATE_PUBKEY_PATH").unwrap_or(SWUPDATE_PUBKEY_PATH_DEFAULT.to_string())
-    }};
-}
-
-macro_rules! no_bootloader_updated_file_path {
-    () => {{
-        static NO_BOOTLOADER_UPDATE_PATH_DEFAULT: &'static str =
-            "/run/omnect-bootloader-update-not-necessary";
-        std::env::var("NO_BOOTLOADER_UPDATE_PATH")
-            .unwrap_or(NO_BOOTLOADER_UPDATE_PATH_DEFAULT.to_string())
-    }};
-}
-
-macro_rules! bootloader_updated_file_path {
-    () => {{
-        static BOOTLOADER_UPDATE_PATH_DEFAULT: &'static str = "/run/omnect-bootloader-update";
-        std::env::var("BOOTLOADER_UPDATE_PATH")
-            .unwrap_or(BOOTLOADER_UPDATE_PATH_DEFAULT.to_string())
-    }};
-}
 
 struct RunGuard {
     succeeded: bool,
@@ -171,7 +124,7 @@ impl FirmwareUpdate {
     {
         self.swu_file_path = None;
 
-        let du_config: DeviceUpdateConfig = Self::json_from_file(&du_config_path!())?;
+        let du_config: DeviceUpdateConfig = json_from_file(&du_config_path!())?;
         let current_version = OmnectOsVersion::from_sw_versions_file()?;
         let mut ar = Archive::new(fs::File::open(path).context("")?);
         let mut swu_path = None;
@@ -234,7 +187,7 @@ impl FirmwareUpdate {
         };
 
         // read manifest
-        let manifest: ImportManifest = Self::json_from_file(&manifest_path)?;
+        let manifest: ImportManifest = json_from_file(&manifest_path)?;
 
         // ensure swu hash
         let Some(file) = manifest
@@ -375,22 +328,6 @@ impl FirmwareUpdate {
     #[cfg(feature = "mock")]
     fn swupdate(_swu_file_path: &str, _selection: &str) -> Result<()> {
         Ok(())
-    }
-
-    fn json_from_file<P, T>(path: P) -> Result<T>
-    where
-        P: AsRef<Path>,
-        P: std::fmt::Display,
-        T: DeserializeOwned,
-    {
-        serde_json::from_reader(
-            fs::OpenOptions::new()
-                .read(true)
-                .create(false)
-                .open(&path)
-                .context(format!("failed to open {path}"))?,
-        )
-        .context(format!("failed to read {path}"))
     }
 }
 
