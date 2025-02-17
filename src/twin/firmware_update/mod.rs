@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
-use log::{error, info};
+use log::{debug, error, info};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -126,7 +126,7 @@ impl FirmwareUpdate {
 
         let du_config: DeviceUpdateConfig = json_from_file(&du_config_path!())?;
         let current_version = OmnectOsVersion::from_sw_versions_file()?;
-        let mut ar = Archive::new(fs::File::open(path).context("")?);
+        let mut ar = Archive::new(fs::File::open(path).context("failed to open archive")?);
         let mut swu_path = None;
         let mut swu_sha = String::from("");
         let mut manifest_path = None;
@@ -135,55 +135,72 @@ impl FirmwareUpdate {
 
         // clean our working folder by 1st removing and 2nd recreating
         let _ = fs::remove_dir_all(&update_folder_path!());
-        fs::create_dir_all(&update_folder_path!()).context("")?;
+        fs::create_dir_all(&update_folder_path!()).context("failed to create update folder")?;
 
-        for file in ar.entries().context("")? {
-            let mut file = file.context("")?;
-            let path = file.path().context("")?;
+        for file in ar.entries().context("failed to get archive entries")? {
+            let mut file = file.context("failed to get archive entry")?;
+            let path = file.path().context("failed to get entry path")?;
 
-            ensure!(path.parent().is_some_and(|p| p == Path::new("")), "");
+            debug!("extract entry: {path:?}");
+
+            ensure!(
+                path.parent().is_some_and(|p| p == Path::new("")),
+                "entry path expected at root of archive"
+            );
 
             let Ok(path) = Path::new(&update_folder_path!())
                 .join(path.display().to_string())
                 .into_os_string()
                 .into_string()
             else {
-                bail!("")
+                bail!("failed to create target path for entry")
             };
 
             if path.ends_with(".swu") {
-                file.unpack(&path).context("")?;
+                file.unpack(&path).context("failed to unpack *.swu")?;
                 swu_sha = base64::encode_config(
-                    Sha256::digest(std::fs::read(&path).context("")?),
+                    Sha256::digest(std::fs::read(&path).context("failed to read *.swu for hash")?),
                     base64::STANDARD,
                 );
                 swu_path = Some(path);
             } else if path.ends_with(".swu.importManifest.json") {
-                file.unpack(&path).context("")?;
-                manifest_sha1 = format!("{:X}", Sha256::digest(std::fs::read(&path).context("")?));
+                file.unpack(&path)
+                    .context("failed to unpack *.swu.importManifest.json")?;
+                manifest_sha1 = format!(
+                    "{:X}",
+                    Sha256::digest(
+                        std::fs::read(&path)
+                            .context("failed to read *.swu.importManifest.json for hash")?
+                    )
+                );
                 manifest_path = Some(path.clone());
             } else if path.ends_with(".swu.importManifest.json.sha256") {
-                file.unpack(&path).context("")?;
-                manifest_sha2 = fs::read_to_string(path).context("")?;
+                file.unpack(&path)
+                    .context("failed to unpack *.swu.importManifest.json.sha256")?;
+                manifest_sha2 = fs::read_to_string(path)
+                    .context("failed to read *.swu.importManifest.json.sha256")?;
             } else {
-                error!("");
+                error!("found unexpected entry");
             }
         }
 
         // ensure manifest hash matches
-        ensure!(manifest_sha1.eq_ignore_ascii_case(manifest_sha2.trim()), "");
+        ensure!(
+            manifest_sha1.eq_ignore_ascii_case(manifest_sha2.trim()),
+            "failed to verify *.swu.importManifest.json hash"
+        );
 
         let Some(manifest_path) = manifest_path else {
-            bail!("");
+            bail!("*.swu.importManifest.json missing");
         };
 
         let Some(swu_path) = swu_path else {
-            bail!("");
+            bail!("*.swu missing");
         };
 
         let swu_filename = PathBuf::from(&swu_path);
         let Some(swu_filename) = swu_filename.file_name() else {
-            bail!("");
+            bail!("failed to get *.swu filename from path");
         };
 
         // read manifest
@@ -195,45 +212,45 @@ impl FirmwareUpdate {
             .iter()
             .find(|f| swu_filename.eq(f.filename.as_str()))
         else {
-            bail!("")
+            bail!("failed to find *.swu in manifest")
         };
 
         ensure!(
             file.hashes["sha256"].eq_ignore_ascii_case(swu_sha.trim()),
-            ""
+            "failed to verify *.swu hash"
         );
 
         ensure!(
             du_config.agents[0].manufacturer == manifest.compatibility[0].manufacturer,
-            ""
+            "failed to verify compatibility: manufacturer"
         );
         ensure!(
             du_config.agents[0].model == manifest.compatibility[0].model,
-            ""
+            "failed to verify compatibility: model"
         );
         ensure!(
             du_config.agents[0]
                 .additional_device_properties
                 .compatibilityid
                 == manifest.compatibility[0].compatibilityid,
-            ""
+            "failed to verify compatibility: compatibilityid"
         );
 
         let new_version = OmnectOsVersion::from_string(&manifest.update_id.version)?;
 
         if current_version == new_version {
-            bail!("")
+            bail!("version {current_version} already installed")
         }
 
         if current_version > new_version {
-            bail!("")
+            bail!("downgrades not allowed ({new_version} < {current_version} )")
         }
 
-        info!("successfully loaded update: current version: {current_version} new version: {new_version}");
+        info!("successfully loaded update (current version: {current_version} new version: {new_version})");
 
         self.swu_file_path = Some(swu_path);
 
-        Ok(Some(serde_json::to_value(manifest).context("")?))
+        Ok(Some(serde_json::to_value(manifest).context("failed to serialize manifest")?))
     }
 
     async fn run(&mut self) -> CommandResult {

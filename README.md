@@ -46,6 +46,7 @@ This module serves as interface between omnect cloud and device to support certa
       - [Feature availability](#feature-availability-8)
   - [Local web service](#local-web-service)
     - [Factory reset](#factory-reset-1)
+    - [Local firmware update](#local-firmware-update)
     - [Trigger reboot](#trigger-reboot-1)
     - [Reload network daemon](#reload-network-daemon)
     - [Status updates](#status-updates)
@@ -833,6 +834,14 @@ Description [Factory reset](#factory-reset).
 
 ```
 curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/factory-reset/v1 --json '{"mode": 1, "preserve": []}'
+```
+
+### Local firmware update
+ToDo !
+Description [Factory reset](#factory-reset).
+
+```
+curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/fwupdate/load/v1 --json '{"update_file_path": "/path/to/update.tar"}'
 ```
 
 ### Trigger reboot
