@@ -168,7 +168,7 @@ impl WebService {
                 Self::exec_request(tx_request.as_ref(), rx_reply, req).await
             }
             Err(e) => {
-                error!("couldn't parse FactoryResetCommand from body: {e}");
+                error!("couldn't parse FactoryResetCommand from body: {e:#}");
                 HttpResponse::build(StatusCode::BAD_REQUEST).body(e.to_string())
             }
         }
@@ -244,7 +244,7 @@ impl WebService {
                 Self::exec_request(tx_request.as_ref(), rx_reply, req).await
             }
             Err(e) => {
-                error!("couldn't parse LoadFirmwareUpdate from body: {e}");
+                error!("couldn't parse LoadFirmwareUpdate from body: {e:#}");
                 HttpResponse::build(StatusCode::BAD_REQUEST).body(e.to_string())
             }
         }
@@ -289,7 +289,7 @@ impl WebService {
                 HttpResponse::Ok().finish()
             }
             Err(e) => {
-                error!("execute request: request failed with: {e}");
+                error!("execute request: request failed with: {e:#}");
                 HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).body(e.to_string())
             }
         }
@@ -317,7 +317,7 @@ pub async fn publish(channel: PublishChannel, value: serde_json::Value) {
             .insert(channel.to_string(), value.clone());
 
         if let Err(e) = publish_to_endpoints(msg).await {
-            warn!("publish: failed to publish request with {e}");
+            warn!("publish: failed to publish request with {e:#}");
         };
     }
 }

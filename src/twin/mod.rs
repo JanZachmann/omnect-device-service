@@ -267,7 +267,7 @@ impl Twin {
             Ok(inner_result) => {
                 info!("handle_command: {cmd_string} succeeded with result: {inner_result:?}")
             }
-            Err(e) => error!("handle_command: {cmd_string} returned error: {e}"),
+            Err(e) => error!("handle_command: {cmd_string} returned error: {e:#}"),
         }
 
         if let Some(reply) = reply {
@@ -422,7 +422,7 @@ impl Twin {
                             match Command::from_direct_method(&direct_method) {
                                 Ok(cmd) => twin.handle_command(cmd, Some(direct_method.responder)).await?,
                                 Err(e) => {
-                                    error!("parsing direct method: {} with payload: {} failed with error: {e}",
+                                    error!("parsing direct method: {} with payload: {} failed with error: {e:#}",
                                         direct_method.name, direct_method.payload);
                                     if direct_method.responder.send(Err(e)).is_err() {
                                         error!("direct method response receiver dropped")

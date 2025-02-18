@@ -103,7 +103,7 @@ impl UpdateValidation {
                         error!("update validation: timeout. rebooting ...");
 
                         if let Err(e) = systemd::reboot().await {
-                            error!("reboot timer couldn't trigger reboot: {e}");
+                            error!("reboot timer couldn't trigger reboot: {e:#}");
                         }
                     }
                     _ => info!("reboot timer canceled."),

@@ -57,7 +57,7 @@ impl Drop for RunGuard {
             tokio::spawn(async move {
                 if let Some(wdt) = wdt {
                     if let Err(e) = WatchdogManager::interval(wdt).await {
-                        error!("RunGuard::drop set wdt: {e}")
+                        error!("RunGuard::drop set wdt: {e:#}")
                     }
                 }
 
@@ -68,7 +68,7 @@ impl Drop for RunGuard {
                 )
                 .await
                 {
-                    error!("RunGuard::drop start unit: {e}")
+                    error!("RunGuard::drop start unit: {e:#}")
                 }
             });
         }
@@ -250,7 +250,9 @@ impl FirmwareUpdate {
 
         self.swu_file_path = Some(swu_path);
 
-        Ok(Some(serde_json::to_value(manifest).context("failed to serialize manifest")?))
+        Ok(Some(
+            serde_json::to_value(manifest).context("failed to serialize manifest")?,
+        ))
     }
 
     async fn run(&mut self) -> CommandResult {
