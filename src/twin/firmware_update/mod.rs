@@ -331,7 +331,10 @@ impl FirmwareUpdate {
 
     #[cfg(not(feature = "mock"))]
     fn swupdate(swu_file_path: &str, selection: &str) -> Result<()> {
-        std::process::Command::new("swupdate")
+        std::process::Command::new("sudo")
+            .arg("-u")
+            .arg("adu")
+            .arg("swupdate")
             .arg("-v")
             .arg("-i")
             .arg(swu_file_path)
