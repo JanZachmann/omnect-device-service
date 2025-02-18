@@ -88,7 +88,7 @@ impl OmnectOsVersion {
 
         let c = regex
             .captures(&sw_versions)
-            .context("failed to create captures")?;
+            .context(format!("no captures found in: {sw_versions}"))?;
 
         Ok(OmnectOsVersion {
             major: c[1].to_string().parse().context("failed to parse major")?,
