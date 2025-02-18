@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use regex::Regex;
+use regex_lite::Regex;
 use std::fmt::Display;
 use std::{cmp::Ordering, fmt, fs};
 

@@ -2418,6 +2418,7 @@ dependencies = [
  "omnect-device-service",
  "rand",
  "regex",
+ "regex-lite",
  "reqwest",
  "sd-notify",
  "serde",
