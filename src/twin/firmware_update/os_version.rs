@@ -84,7 +84,7 @@ impl OmnectOsVersion {
         let sw_versions =
             fs::read_to_string(sw_versions_path!()).context("failed to read sw-versions file")?;
         let regex =
-            Regex::new(r#"^.* (\d*).(\d*).(\d*).(\d*)$"#).context("failed to create regex")?;
+            Regex::new(r"^.* (\d*).(\d*).(\d*).(\d*)$").context("failed to create regex")?;
 
         let c = regex
             .captures(&sw_versions)
