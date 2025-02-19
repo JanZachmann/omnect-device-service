@@ -58,7 +58,7 @@ impl Display for OmnectOsVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "({}, {},{}, {})",
+            "{}.{}.{}.{}",
             self.major, self.minor, self.patch, self.build
         )
     }

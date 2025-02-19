@@ -80,6 +80,11 @@ pub struct LoadUpdateCommand {
     pub update_file_path: PathBuf,
 }
 
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct RunUpdateCommand {
+    pub validate_iothub_connection: bool,
+}
+
 #[derive(Default)]
 pub struct FirmwareUpdate {
     swu_file_path: Option<String>,
@@ -108,7 +113,7 @@ impl Feature for FirmwareUpdate {
     async fn command(&mut self, cmd: Command) -> CommandResult {
         match cmd {
             Command::LoadFirmwareUpdate(cmd) => self.load(cmd.update_file_path),
-            Command::RunFirmwareUpdate => self.run().await,
+            Command::RunFirmwareUpdate(cmd) => self.run(cmd.validate_iothub_connection).await,
             _ => bail!("unexpected command"),
         }
     }
@@ -255,7 +260,7 @@ impl FirmwareUpdate {
         ))
     }
 
-    async fn run(&mut self) -> CommandResult {
+    async fn run(&mut self, validate_iothub_connection: bool) -> CommandResult {
         let Some(ref swu_file_path) = self.swu_file_path else {
             bail!("no update loaded")
         };
@@ -303,24 +308,11 @@ impl FirmwareUpdate {
             )?;
         }
 
-        let update_validation_conf = UpdateValidationConfig { local: true };
-
-        serde_json::to_writer_pretty(
-            fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(update_validation_config_path!())
-                .context(format!(
-                    "failed to open {}",
-                    update_validation_config_path!()
-                ))?,
-            &update_validation_conf,
-        )
-        .context(format!(
-            "failed to serialize to {}",
-            update_validation_config_path!()
-        ))?;
+        json_to_file(
+            &UpdateValidationConfig { local: !validate_iothub_connection },
+            update_validation_config_path!(),
+            true,
+        )?;
 
         systemd::reboot().await?;
 

@@ -35,7 +35,7 @@ pub enum Command {
     OpenSshTunnel(ssh_tunnel::OpenSshTunnelCommand),
     Reboot,
     ReloadNetwork,
-    RunFirmwareUpdate,
+    RunFirmwareUpdate(firmware_update::RunUpdateCommand),
     SetWaitOnlineTimeout(reboot::SetWaitOnlineTimeoutCommand),
     UserConsent(consent::UserConsentCommand),
 }
@@ -57,7 +57,7 @@ impl Command {
             OpenSshTunnel(_) => TypeId::of::<ssh_tunnel::SshTunnel>(),
             Reboot => TypeId::of::<reboot::Reboot>(),
             ReloadNetwork => TypeId::of::<network::Network>(),
-            RunFirmwareUpdate => TypeId::of::<firmware_update::FirmwareUpdate>(),
+            RunFirmwareUpdate(_) => TypeId::of::<firmware_update::FirmwareUpdate>(),
             SetWaitOnlineTimeout(_) => TypeId::of::<reboot::Reboot>(),
             UserConsent(_) => TypeId::of::<consent::DeviceUpdateConsent>(),
         }

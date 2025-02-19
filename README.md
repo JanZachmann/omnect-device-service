@@ -844,6 +844,10 @@ Description [Factory reset](#factory-reset).
 curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/fwupdate/load/v1 --json '{"update_file_path": "/path/to/update.tar"}'
 ```
 
+```
+curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/fwupdate/run/v1 --json '{"validate_iothub_connection": bool}'
+```
+
 ### Trigger reboot
 
 ```

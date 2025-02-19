@@ -250,16 +250,40 @@ impl WebService {
         }
     }
 
-    async fn run_fwupdate(tx_request: web::Data<mpsc::Sender<Request>>) -> HttpResponse {
+    async fn run_fwupdate(
+        body: web::Payload,
+        tx_request: web::Data<mpsc::Sender<Request>>,
+    ) -> HttpResponse {
         debug!("WebService run_fwupdate");
 
-        let (tx_reply, rx_reply) = oneshot::channel();
+        let Ok(bytes) = Self::bytes_from_body(body).await else {
+            return HttpResponse::build(StatusCode::BAD_REQUEST)
+                .body("couldn't read body from stream");
+        };
+
+        match serde_json::from_slice(&bytes) {
+            Ok(command) => {
+                let (tx_reply, rx_reply) = oneshot::channel();
+                let req = Request {
+                    command: Command::RunFirmwareUpdate(command),
+                    reply: tx_reply,
+                };
+
+                Self::exec_request(tx_request.as_ref(), rx_reply, req).await
+            }
+            Err(e) => {
+                error!("couldn't parse RunFirmwareUpdate from body: {e:#}");
+                HttpResponse::build(StatusCode::BAD_REQUEST).body(e.to_string())
+            }
+        }
+
+        /*         let (tx_reply, rx_reply) = oneshot::channel();
         let cmd = Request {
             command: Command::RunFirmwareUpdate,
             reply: tx_reply,
         };
 
-        Self::exec_request(tx_request.as_ref(), rx_reply, cmd).await
+        Self::exec_request(tx_request.as_ref(), rx_reply, cmd).await */
     }
 
     async fn exec_request(
