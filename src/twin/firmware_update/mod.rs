@@ -183,7 +183,11 @@ impl FirmwareUpdate {
                 file.unpack(&path)
                     .context("failed to unpack *.swu.importManifest.json.sha256")?;
                 manifest_sha2 = fs::read_to_string(path)
-                    .context("failed to read *.swu.importManifest.json.sha256")?;
+                    .context("failed to read *.swu.importManifest.json.sha256")?
+                    .split_whitespace()
+                    .next()
+                    .context("failed to read first string of *.swu.importManifest.json.sha256")?
+                    .to_owned();
             } else {
                 error!("found unexpected entry");
             }
@@ -309,7 +313,9 @@ impl FirmwareUpdate {
         }
 
         json_to_file(
-            &UpdateValidationConfig { local: !validate_iothub_connection },
+            &UpdateValidationConfig {
+                local: !validate_iothub_connection,
+            },
             update_validation_config_path!(),
             true,
         )?;
