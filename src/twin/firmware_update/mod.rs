@@ -341,8 +341,8 @@ impl FirmwareUpdate {
                 .arg(pubkey_file_path!())
                 .arg("-e")
                 .arg(selection)
-                .arg("&>>")
-                .arg(log_file_path!())
+/*                 .arg("&>>")
+                .arg(log_file_path!()) */
                 .status()?
                 .success(),
             "failed to run swupdate command"
