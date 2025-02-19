@@ -92,7 +92,9 @@ pub struct FirmwareUpdate {
 
 impl Drop for FirmwareUpdate {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&update_folder_path!());
+        if let Err(e) = Self::clean_working_dir() {
+            error!("failed to clean working directory: {e}")
+        }
     }
 }
 
@@ -138,9 +140,7 @@ impl FirmwareUpdate {
         let mut manifest_sha1 = String::from("");
         let mut manifest_sha2 = String::from("");
 
-        // clean our working folder by 1st removing and 2nd recreating
-        let _ = fs::remove_dir_all(&update_folder_path!());
-        fs::create_dir_all(&update_folder_path!()).context("failed to create update folder")?;
+        Self::clean_working_dir().context("failed to clean working directory")?;
 
         for file in ar.entries().context("failed to get archive entries")? {
             let mut file = file.context("failed to get archive entry")?;
@@ -341,7 +341,7 @@ impl FirmwareUpdate {
                 .arg(pubkey_file_path!())
                 .arg("-e")
                 .arg(selection)
-/*                 .arg("&>>")
+                /*                 .arg("&>>")
                 .arg(log_file_path!()) */
                 .status()?
                 .success(),
@@ -351,6 +351,20 @@ impl FirmwareUpdate {
     }
     #[cfg(feature = "mock")]
     fn swupdate(_swu_file_path: &str, _selection: &str) -> Result<()> {
+        Ok(())
+    }
+
+    fn clean_working_dir() -> Result<()> {
+        for entry in fs::read_dir(update_folder_path!())? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if entry.file_type()?.is_dir() {
+                fs::remove_dir_all(path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
+        }
         Ok(())
     }
 }
