@@ -329,20 +329,24 @@ impl FirmwareUpdate {
 
     #[cfg(not(feature = "mock"))]
     fn swupdate(swu_file_path: &str, selection: &str) -> Result<()> {
-        std::process::Command::new("sudo")
-            .arg("-u")
-            .arg("adu")
-            .arg("swupdate")
-            .arg("-v")
-            .arg("-i")
-            .arg(swu_file_path)
-            .arg("-k")
-            .arg(pubkey_file_path!())
-            .arg("-e")
-            .arg(selection)
-            .arg("&>>")
-            .arg(log_file_path!())
-            .status()?;
+        ensure!(
+            std::process::Command::new("sudo")
+                .arg("-u")
+                .arg("adu")
+                .arg("swupdate")
+                .arg("-v")
+                .arg("-i")
+                .arg(swu_file_path)
+                .arg("-k")
+                .arg(pubkey_file_path!())
+                .arg("-e")
+                .arg(selection)
+                .arg("&>>")
+                .arg(log_file_path!())
+                .status()?
+                .success(),
+            "failed to run swupdate command"
+        );
         Ok(())
     }
     #[cfg(feature = "mock")]
