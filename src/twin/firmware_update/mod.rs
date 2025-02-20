@@ -331,7 +331,7 @@ impl FirmwareUpdate {
     fn swupdate(swu_file_path: &str, selection: &str) -> Result<()> {
         ensure!(
             std::process::Command::new("sudo")
-                .arg("-g")
+                .arg("-u")
                 .arg("adu")
                 .arg("swupdate")
                 .arg("-v")
