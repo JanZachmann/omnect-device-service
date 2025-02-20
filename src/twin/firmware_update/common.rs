@@ -50,7 +50,7 @@ macro_rules! pubkey_file_path {
 macro_rules! no_bootloader_updated_file_path {
     () => {{
         static NO_BOOTLOADER_UPDATE_PATH_DEFAULT: &'static str =
-            "/run/omnect-bootloader-update-not-necessary";
+            "/run/adu/omnect-bootloader-update-not-necessary";
         std::env::var("NO_BOOTLOADER_UPDATE_PATH")
             .unwrap_or(NO_BOOTLOADER_UPDATE_PATH_DEFAULT.to_string())
     }};
@@ -58,7 +58,7 @@ macro_rules! no_bootloader_updated_file_path {
 
 macro_rules! bootloader_updated_file_path {
     () => {{
-        static BOOTLOADER_UPDATE_PATH_DEFAULT: &'static str = "/run/omnect-bootloader-update";
+        static BOOTLOADER_UPDATE_PATH_DEFAULT: &'static str = "/run/adu/omnect-bootloader-update";
         std::env::var("BOOTLOADER_UPDATE_PATH")
             .unwrap_or(BOOTLOADER_UPDATE_PATH_DEFAULT.to_string())
     }};
