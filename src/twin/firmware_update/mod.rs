@@ -343,6 +343,7 @@ impl FirmwareUpdate {
                 .arg(selection)
                 /*                 .arg("&>>")
                 .arg(log_file_path!()) */
+                .current_dir("/usr/bin")
                 .status()?
                 .success(),
             "failed to run swupdate command"
