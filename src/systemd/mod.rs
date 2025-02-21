@@ -33,9 +33,11 @@ pub async fn reboot() -> Result<()> {
         error!("reboot: failed to execute 'journalctl --sync' with: {e:#}")
     }
 
-/*     zbus::Connection::system()
-        .await
-        .context("reboot: zbus::Connection::system() failed")?
+    let system = zbus::Connection::system().await;
+    debug!("system: {system:?}");
+
+    let system = system.unwrap();
+    let result = system
         .call_method(
             Some("org.freedesktop.login1"),
             "/org/freedesktop/login1",
@@ -43,8 +45,21 @@ pub async fn reboot() -> Result<()> {
             "Reboot",
             &(true),
         )
-        .await
-        .context("reboot: call_method() failed")?; */
+        .await;
+    debug!("result: {result:?}");
+
+    /*     zbus::Connection::system()
+    .await
+    .context("reboot: zbus::Connection::system() failed")?
+    .call_method(
+        Some("org.freedesktop.login1"),
+        "/org/freedesktop/login1",
+        Some("org.freedesktop.login1.Manager"),
+        "Reboot",
+        &(true),
+    )
+    .await
+    .context("reboot: call_method() failed")?; */
     Ok(())
 }
 
