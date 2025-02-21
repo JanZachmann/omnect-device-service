@@ -25,6 +25,8 @@ use std::{
 };
 use tar::Archive;
 
+static UPDATE_WDT_INTERVAL_SECS: u64 = 600;
+
 struct RunGuard {
     succeeded: bool,
     wdt: Option<Duration>,
@@ -33,7 +35,9 @@ struct RunGuard {
 impl RunGuard {
     async fn new() -> Result<Self> {
         let succeeded = false;
-        let wdt = WatchdogManager::interval(Duration::from_secs(600)).await?;
+        let wdt = WatchdogManager::interval(Duration::from_secs(UPDATE_WDT_INTERVAL_SECS)).await?;
+
+        debug!("changed wdt to {UPDATE_WDT_INTERVAL_SECS}s and saved old one ({wdt:?})");
 
         systemd::unit::unit_action(
             IOT_HUB_DEVICE_UPDATE_SERVICE,
@@ -41,6 +45,8 @@ impl RunGuard {
             Duration::from_secs(30),
         )
         .await?;
+
+        debug!("stopped {IOT_HUB_DEVICE_UPDATE_SERVICE}");
 
         Ok(RunGuard { succeeded, wdt })
     }
@@ -54,10 +60,13 @@ impl Drop for RunGuard {
     fn drop(&mut self) {
         if !(self.succeeded) {
             let wdt = self.wdt.take();
+
+            debug!("update failed: restore old wdt ({wdt:?}) and restart {IOT_HUB_DEVICE_UPDATE_SERVICE}");
+
             tokio::spawn(async move {
                 if let Some(wdt) = wdt {
                     if let Err(e) = WatchdogManager::interval(wdt).await {
-                        error!("RunGuard::drop set wdt: {e:#}")
+                        error!("failed to restore wdt interval: {e:#}")
                     }
                 }
 
@@ -68,7 +77,7 @@ impl Drop for RunGuard {
                 )
                 .await
                 {
-                    error!("RunGuard::drop start unit: {e:#}")
+                    error!("failed to restart {IOT_HUB_DEVICE_UPDATE_SERVICE}: {e:#}")
                 }
             });
         }
@@ -321,6 +330,8 @@ impl FirmwareUpdate {
         )?;
 
         systemd::reboot().await?;
+
+        info!("update succeeded");
 
         guard.finalize();
 
