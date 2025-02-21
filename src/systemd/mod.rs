@@ -32,7 +32,7 @@ pub async fn reboot() -> Result<()> {
     {
         error!("reboot: failed to execute 'journalctl --sync' with: {e:#}")
     }
-
+    debug!("before system");
     let system = zbus::Connection::system().await;
     debug!("system: {system:?}");
 
