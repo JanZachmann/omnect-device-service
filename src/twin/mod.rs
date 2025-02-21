@@ -417,17 +417,20 @@ impl Twin {
                                 .context("couldn't report properties since client not present")?
                                 .twin_report(reported)?
                         },
-                        Some(direct_method) = rx_direct_method.recv() => {
-                            let _guard = guard.lock().await;
-                            match Command::from_direct_method(&direct_method) {
-                                Ok(cmd) => twin.handle_command(cmd, Some(direct_method.responder)).await?,
-                                Err(e) => {
-                                    error!("parsing direct method: {} with payload: {} failed with error: {e:#}",
-                                        direct_method.name, direct_method.payload);
-                                    if direct_method.responder.send(Err(e)).is_err() {
-                                        error!("direct method response receiver dropped")
-                                    }
-                                },
+                        mut direct_method = rx_direct_method.recv() => {
+                            if direct_method.is_some() {
+                                let _guard = guard.lock().await;
+                                let dm = direct_method.take().context("")?;
+                                match Command::from_direct_method(&dm) {
+                                    Ok(cmd) => twin.handle_command(cmd, Some(dm.responder)).await?,
+                                    Err(e) => {
+                                        error!("parsing direct method: {} with payload: {} failed with error: {e:#}",
+                                        dm.name, dm.payload);
+                                        if dm.responder.send(Err(e)).is_err() {
+                                            error!("direct method response receiver dropped")
+                                        }
+                                    },
+                                }
                             }
                         },
                         Some(message) = rx_outgoing_message.recv() => {
@@ -437,9 +440,12 @@ impl Twin {
                                 .context("couldn't send msg since client not present")?
                                 .send_d2c_message(message)?
                         },
-                        Some(request) = rx_web_service.recv() => {
-                            let _guard = guard.lock().await;
-                            twin.handle_command(request.command, Some(request.reply)).await?
+                        mut request = rx_web_service.recv() => {
+                            if request.is_some() {
+                                let _guard = guard.lock().await;
+                                let r = request.take().context("")?;
+                                twin.handle_command(r.command, Some(r.reply)).await?
+                            }
                         },
                         command = refresh_features.select_next_some() => {
                             let _guard = guard.lock().await;
