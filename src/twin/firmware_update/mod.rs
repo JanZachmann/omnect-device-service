@@ -329,7 +329,7 @@ impl FirmwareUpdate {
             true,
         )?;
 
-        //systemd::reboot().await?;
+        systemd::reboot().await?;
 
         info!("update succeeded");
 
