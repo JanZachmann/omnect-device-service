@@ -121,6 +121,7 @@ impl UpdateValidation {
                 self.authenticated, self.local_update
             );
 
+            // for local updates we accept if there is no connection to iothub
             if self.local_update || self.authenticated {
                 json_to_file(&self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, false)?;
                 // for now start validation blocking twin::init - maybe we want an successful twin::init as part of validation at some point?
