@@ -329,10 +329,7 @@ impl FirmwareUpdate {
             true,
         )?;
 
-        if let Err(e) = systemd::reboot().await {
-            error!("reboot failed with: {e}");
-            return Err(e);
-        }
+        systemd::reboot().await?;
 
         info!("update succeeded");
 

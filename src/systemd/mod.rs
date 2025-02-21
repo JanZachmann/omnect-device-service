@@ -33,7 +33,7 @@ pub async fn reboot() -> Result<()> {
         error!("reboot: failed to execute 'journalctl --sync' with: {e:#}")
     }
 
-    zbus::Connection::system()
+/*     zbus::Connection::system()
         .await
         .context("reboot: zbus::Connection::system() failed")?
         .call_method(
@@ -44,7 +44,7 @@ pub async fn reboot() -> Result<()> {
             &(true),
         )
         .await
-        .context("reboot: call_method() failed")?;
+        .context("reboot: call_method() failed")?; */
     Ok(())
 }
 
