@@ -404,18 +404,24 @@ impl Twin {
                 result = async {
                     select! (
                         // random access order in 2nd select! macro
-                        Some(update_desired) = rx_twin_desired.recv() => {
-                            let _guard = guard.lock().await;
-                            for cmd in Command::from_desired_property(update_desired) {
-                                twin.handle_command(cmd, None).await?
+                        mut update_desired = rx_twin_desired.recv() => {
+                            if update_desired.is_some() {
+                                let _guard = guard.lock().await;
+                                let d = update_desired.take().context("")?;
+                                for cmd in Command::from_desired_property(d) {
+                                    twin.handle_command(cmd, None).await?
+                                }
                             }
                         },
-                        Some(reported) = rx_reported_properties.recv() => {
-                            let _guard = guard.lock().await;
-                            twin.client
-                                .as_ref()
-                                .context("couldn't report properties since client not present")?
-                                .twin_report(reported)?
+                        mut reported = rx_reported_properties.recv() => {
+                            if reported.is_some() {
+                                let _guard = guard.lock().await;
+                                let r = reported.take().context("")?;
+                                twin.client
+                                    .as_ref()
+                                    .context("couldn't report properties since client not present")?
+                                    .twin_report(r)?
+                            }
                         },
                         mut direct_method = rx_direct_method.recv() => {
                             if direct_method.is_some() {
@@ -447,16 +453,19 @@ impl Twin {
                                 twin.handle_command(r.command, Some(r.reply)).await?
                             }
                         },
-                        command = refresh_features.select_next_some() => {
-                            let _guard = guard.lock().await;
-                            let feature = twin
-                                .features
-                                .get_mut(&command.feature_id())
-                                .context("event stream: failed to get feature mutable")?;
+                        mut command = refresh_features.next() => {
+                            if command.is_some() {
+                                let _guard = guard.lock().await;
+                                let cmd = command.take().context("")?;
+                                let feature = twin
+                                    .features
+                                    .get_mut(&cmd.feature_id())
+                                    .context("event stream: failed to get feature mutable")?;
 
-                            ensure!(feature.is_enabled(), "event stream: feature is disabled {}", feature.name());
-                            info!("event stream: {}({command:?})", feature.name());
-                            feature.command(command).await?;
+                                ensure!(feature.is_enabled(), "event stream: feature is disabled {}", feature.name());
+                                info!("event stream: {}({cmd:?})", feature.name());
+                                feature.command(cmd).await?;
+                            }
                         },
                     );
 
