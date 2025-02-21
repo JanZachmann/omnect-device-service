@@ -329,11 +329,11 @@ impl FirmwareUpdate {
             true,
         )?;
 
-        systemd::reboot().await?;
-
         info!("update succeeded");
 
         guard.finalize();
+
+        systemd::reboot().await?;
 
         Ok(None)
     }
