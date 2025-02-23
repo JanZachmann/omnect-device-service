@@ -40,17 +40,17 @@ macro_rules! factory_reset_custom_config_dir_path {
     }};
 }
 
-#[derive(Debug, Deserialize_repr, PartialEq, Serialize_repr)]
+#[derive(Clone, Debug, Deserialize_repr, PartialEq, Serialize_repr)]
 #[repr(u8)]
-pub(crate) enum FactoryResetMode {
+pub enum FactoryResetMode {
     Mode1 = 1,
     Mode2 = 2,
     Mode3 = 3,
     Mode4 = 4,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct FactoryResetCommand {
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct FactoryResetCommand {
     pub mode: FactoryResetMode,
     pub preserve: Vec<String>,
 }

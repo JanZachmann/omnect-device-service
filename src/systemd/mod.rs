@@ -24,20 +24,17 @@ pub async fn reboot() -> Result<()> {
     use std::process::Command;
 
     info!("systemd::reboot");
+    
     //journalctl seems not to have a dbus api
-    if let Err(e) = Command::new("sudo")
-        .arg("journalctl")
-        .arg("--sync")
-        .status()
-    {
-        error!("reboot: failed to execute 'journalctl --sync' with: {e:#}")
+    match Command::new("sudo").args(["journalctl", "--sync"]).status() {
+        Ok(status) if !status.success() => error!("reboot: failed to execute 'journalctl --sync'"),
+        Err(e) => error!("reboot: failed to execute 'journalctl --sync' with: {e:#}"),
+        _ => debug!("reboot: succeeded to execute 'journalctl --sync'"),
     }
-    debug!("before system");
-    let system = zbus::Connection::system().await;
-    debug!("system: {system:?}");
 
-    let system = system.unwrap();
-    let result = system
+    zbus::Connection::system()
+        .await
+        .context("reboot: zbus::Connection::system() failed")?
         .call_method(
             Some("org.freedesktop.login1"),
             "/org/freedesktop/login1",
@@ -45,21 +42,8 @@ pub async fn reboot() -> Result<()> {
             "Reboot",
             &(true),
         )
-        .await;
-    debug!("result: {result:?}");
-
-    /*     zbus::Connection::system()
-    .await
-    .context("reboot: zbus::Connection::system() failed")?
-    .call_method(
-        Some("org.freedesktop.login1"),
-        "/org/freedesktop/login1",
-        Some("org.freedesktop.login1.Manager"),
-        "Reboot",
-        &(true),
-    )
-    .await
-    .context("reboot: call_method() failed")?; */
+        .await
+        .context("reboot: call_method() failed")?;
     Ok(())
 }
 

@@ -61,8 +61,8 @@ macro_rules! device_cert_file {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize, PartialEq)]
-pub(crate) struct BastionConfig {
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct BastionConfig {
     pub host: String,
     pub port: u16,
     pub user: String,
@@ -95,19 +95,19 @@ where
         .to_string())
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
-pub(crate) struct UpdateDeviceSshCaCommand {
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct UpdateDeviceSshCaCommand {
     ssh_tunnel_ca_pub: String,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
-pub(crate) struct GetSshPubKeyCommand {
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct GetSshPubKeyCommand {
     #[serde(deserialize_with = "validate_uuid")]
     pub tunnel_id: String,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
-pub(crate) struct OpenSshTunnelCommand {
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct OpenSshTunnelCommand {
     #[serde(deserialize_with = "validate_uuid")]
     pub tunnel_id: String,
     pub certificate: String,
@@ -115,8 +115,8 @@ pub(crate) struct OpenSshTunnelCommand {
     pub bastion_config: BastionConfig,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
-pub(crate) struct CloseSshTunnelCommand {
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct CloseSshTunnelCommand {
     #[serde(deserialize_with = "validate_uuid")]
     pub tunnel_id: String,
 }

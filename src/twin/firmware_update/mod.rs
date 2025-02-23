@@ -84,12 +84,12 @@ impl Drop for RunGuard {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct LoadUpdateCommand {
     pub update_file_path: PathBuf,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct RunUpdateCommand {
     pub validate_iothub_connection: bool,
 }

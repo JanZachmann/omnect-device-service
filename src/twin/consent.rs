@@ -36,14 +36,14 @@ macro_rules! history_consent_path {
     }};
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
-pub(crate) struct UserConsentCommand {
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct UserConsentCommand {
     pub user_consent: HashMap<String, String>,
 }
 
 type GeneralConsent = Vec<String>;
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct DesiredGeneralConsentCommand {
     pub general_consent: GeneralConsent,
 }

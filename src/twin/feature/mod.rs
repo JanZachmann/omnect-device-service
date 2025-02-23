@@ -5,23 +5,23 @@ use super::{
 };
 use anyhow::{bail, ensure, Result};
 use async_trait::async_trait;
-use azure_iot_sdk::client::DirectMethod;
-use azure_iot_sdk::client::IotMessage;
+use azure_iot_sdk::client::{DirectMethod, IotMessage};
 use futures::Stream;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use notify_debouncer_full::{new_debouncer, notify::*, DebounceEventResult, Debouncer, NoCache};
-use std::any::TypeId;
-use std::path::Path;
-use std::path::PathBuf;
-use std::pin::Pin;
-use std::time::Duration;
+use std::{
+    any::TypeId,
+    path::{Path, PathBuf},
+    pin::Pin,
+    time::Duration,
+};
 use tokio::{
-    sync::mpsc,
+    sync::{mpsc, oneshot},
     time::{Instant, Interval},
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     CloseSshTunnel(ssh_tunnel::CloseSshTunnelCommand),
     DesiredGeneralConsent(consent::DesiredGeneralConsentCommand),
@@ -154,8 +154,14 @@ impl Command {
     }
 }
 
+#[derive(Debug)]
+pub struct CommandRequest {
+    pub command: Command,
+    pub reply: Option<oneshot::Sender<CommandResult>>,
+}
+
 pub type CommandResult = Result<Option<serde_json::Value>>;
-pub type EventStream = Pin<Box<dyn Stream<Item = Command> + Send>>;
+pub type EventStream = Pin<Box<dyn Stream<Item = Vec<CommandRequest>> + Send>>;
 pub type EventStreamResult = Result<Option<EventStream>>;
 
 #[async_trait(?Send)]
@@ -185,13 +191,13 @@ pub(crate) trait Feature {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FileCommand {
     pub feature_id: TypeId,
     pub path: PathBuf,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct IntervalCommand {
     pub feature_id: TypeId,
     pub instant: Instant,
@@ -203,10 +209,13 @@ where
 {
     tokio_stream::wrappers::IntervalStream::new(interval)
         .map(|i| {
-            Command::Interval(IntervalCommand {
-                feature_id: TypeId::of::<T>(),
-                instant: i,
-            })
+            vec![CommandRequest {
+                command: Command::Interval(IntervalCommand {
+                    feature_id: TypeId::of::<T>(),
+                    instant: i,
+                }),
+                reply: None,
+            }]
         })
         .boxed()
 }
@@ -221,10 +230,13 @@ where
     tokio::task::spawn_blocking(move || loop {
         for p in &inner_paths {
             if matches!(p.try_exists(), Ok(true)) {
-                let _ = tx.blocking_send(Command::FileCreated(FileCommand {
-                    feature_id: TypeId::of::<T>(),
-                    path: p.clone(),
-                }));
+                let _ = tx.blocking_send(vec![CommandRequest {
+                    command: Command::FileCreated(FileCommand {
+                        feature_id: TypeId::of::<T>(),
+                        path: p.clone(),
+                    }),
+                    reply: None,
+                }]);
                 return;
             }
         }
@@ -250,10 +262,13 @@ where
                     if let EventKind::Modify(_) = de.event.kind {
                         debug!("notify-event: {de:?}");
                         for p in &de.paths {
-                            let _ = tx.blocking_send(Command::FileModified(FileCommand {
-                                feature_id: TypeId::of::<T>(),
-                                path: p.clone(),
-                            }));
+                            let _ = tx.blocking_send(vec![CommandRequest {
+                                command: Command::FileModified(FileCommand {
+                                    feature_id: TypeId::of::<T>(),
+                                    path: p.clone(),
+                                }),
+                                reply: None,
+                            }]);
                         }
                     }
                 }
@@ -276,13 +291,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use crate::twin::factory_reset;
-
     use super::*;
+    use crate::twin::factory_reset;
     use reboot::SetWaitOnlineTimeoutCommand;
     use serde_json::json;
+    use std::str::FromStr;
     use tokio::sync::oneshot;
 
     #[test]

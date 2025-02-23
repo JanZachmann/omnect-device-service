@@ -34,12 +34,6 @@ static PUBLISH_ENDPOINTS: LazyLock<Mutex<Vec<PublishEndpoint>>> =
         }
     });
 
-#[derive(Debug)]
-pub struct Request {
-    pub(crate) command: Command,
-    pub(crate) reply: oneshot::Sender<CommandResult>,
-}
-
 #[derive(Debug, strum_macros::Display)]
 pub enum PublishChannel {
     FactoryResetKeys,
@@ -76,7 +70,7 @@ pub struct WebService {
 }
 
 impl WebService {
-    pub async fn run(tx_request: mpsc::Sender<Request>) -> Result<Option<Self>> {
+    pub async fn run(tx_request: mpsc::Sender<Vec<CommandRequest>>) -> Result<Option<Self>> {
         // we only start web service feature if WEBSERVICE_ENABLED env var is explicitly set
         if !(*WEBSERVICE_ENABLED) {
             info!("WebService is disabled");
@@ -148,7 +142,7 @@ impl WebService {
 
     async fn factory_reset(
         body: web::Payload,
-        tx_request: web::Data<mpsc::Sender<Request>>,
+        tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
     ) -> HttpResponse {
         debug!("WebService factory_reset");
 
@@ -160,9 +154,9 @@ impl WebService {
         match serde_json::from_slice(&bytes) {
             Ok(command) => {
                 let (tx_reply, rx_reply) = oneshot::channel();
-                let req = Request {
+                let req = CommandRequest {
                     command: Command::FactoryReset(command),
-                    reply: tx_reply,
+                    reply: Some(tx_reply),
                 };
 
                 Self::exec_request(tx_request.as_ref(), rx_reply, req).await
@@ -174,31 +168,33 @@ impl WebService {
         }
     }
 
-    async fn reboot(tx_request: web::Data<mpsc::Sender<Request>>) -> HttpResponse {
+    async fn reboot(tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>) -> HttpResponse {
         debug!("WebService reboot");
 
         let (tx_reply, rx_reply) = oneshot::channel();
-        let cmd = Request {
+        let cmd = CommandRequest {
             command: Command::Reboot,
-            reply: tx_reply,
+            reply: Some(tx_reply),
         };
 
         Self::exec_request(tx_request.as_ref(), rx_reply, cmd).await
     }
 
-    async fn reload_network(tx_request: web::Data<mpsc::Sender<Request>>) -> HttpResponse {
+    async fn reload_network(
+        tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
+    ) -> HttpResponse {
         debug!("WebService reload_network");
 
         let (tx_reply, rx_reply) = oneshot::channel();
-        let cmd = Request {
+        let cmd = CommandRequest {
             command: Command::ReloadNetwork,
-            reply: tx_reply,
+            reply: Some(tx_reply),
         };
 
         Self::exec_request(tx_request.as_ref(), rx_reply, cmd).await
     }
 
-    async fn republish(_tx_request: web::Data<mpsc::Sender<Request>>) -> HttpResponse {
+    async fn republish(_tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>) -> HttpResponse {
         debug!("WebService republish");
 
         for (channel, value) in PUBLISH_CHANNEL_MAP.lock().await.iter() {
@@ -212,7 +208,7 @@ impl WebService {
         HttpResponse::Ok().finish()
     }
 
-    async fn status(_tx_request: web::Data<mpsc::Sender<Request>>) -> HttpResponse {
+    async fn status(_tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>) -> HttpResponse {
         debug!("WebService status");
 
         let pubs = PUBLISH_CHANNEL_MAP.lock().await;
@@ -224,7 +220,7 @@ impl WebService {
 
     async fn load_fwupdate(
         body: web::Payload,
-        tx_request: web::Data<mpsc::Sender<Request>>,
+        tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
     ) -> HttpResponse {
         debug!("WebService load_fwupdate");
 
@@ -236,9 +232,9 @@ impl WebService {
         match serde_json::from_slice(&bytes) {
             Ok(command) => {
                 let (tx_reply, rx_reply) = oneshot::channel();
-                let req = Request {
+                let req = CommandRequest {
                     command: Command::LoadFirmwareUpdate(command),
-                    reply: tx_reply,
+                    reply: Some(tx_reply),
                 };
 
                 Self::exec_request(tx_request.as_ref(), rx_reply, req).await
@@ -252,7 +248,7 @@ impl WebService {
 
     async fn run_fwupdate(
         body: web::Payload,
-        tx_request: web::Data<mpsc::Sender<Request>>,
+        tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
     ) -> HttpResponse {
         debug!("WebService run_fwupdate");
 
@@ -264,9 +260,9 @@ impl WebService {
         match serde_json::from_slice(&bytes) {
             Ok(command) => {
                 let (tx_reply, rx_reply) = oneshot::channel();
-                let req = Request {
+                let req = CommandRequest {
                     command: Command::RunFirmwareUpdate(command),
-                    reply: tx_reply,
+                    reply: Some(tx_reply),
                 };
 
                 Self::exec_request(tx_request.as_ref(), rx_reply, req).await
@@ -276,24 +272,16 @@ impl WebService {
                 HttpResponse::build(StatusCode::BAD_REQUEST).body(e.to_string())
             }
         }
-
-        /*         let (tx_reply, rx_reply) = oneshot::channel();
-        let cmd = Request {
-            command: Command::RunFirmwareUpdate,
-            reply: tx_reply,
-        };
-
-        Self::exec_request(tx_request.as_ref(), rx_reply, cmd).await */
     }
 
     async fn exec_request(
-        tx_request: &mpsc::Sender<Request>,
+        tx_request: &mpsc::Sender<Vec<CommandRequest>>,
         rx_reply: tokio::sync::oneshot::Receiver<CommandResult>,
-        request: Request,
+        request: CommandRequest,
     ) -> HttpResponse {
         info!("execute request: send {request:?}");
 
-        if tx_request.send(request).await.is_err() {
+        if tx_request.send(vec![request]).await.is_err() {
             error!("execute request: command receiver droped");
             return HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).finish();
         }
@@ -395,7 +383,8 @@ mod tests {
 
     #[actix_web::test]
     async fn reboot_ok() {
-        let (tx_web_service, mut rx_web_service) = tokio::sync::mpsc::channel::<Request>(100);
+        let (tx_web_service, mut rx_web_service) =
+            tokio::sync::mpsc::channel::<CommandRequest>(100);
 
         let app = test::init_service(
             App::new()
@@ -406,7 +395,7 @@ mod tests {
 
         tokio::spawn(async move {
             let req = rx_web_service.recv().await.unwrap();
-            req.reply.send(Ok(None)).unwrap();
+            req.reply.unwrap().send(Ok(None)).unwrap();
         });
 
         let req = test::TestRequest::post().uri("/reboot/v1").to_request();
@@ -416,7 +405,8 @@ mod tests {
 
     #[actix_web::test]
     async fn reboot_fail() {
-        let (tx_web_service, mut rx_web_service) = tokio::sync::mpsc::channel::<Request>(100);
+        let (tx_web_service, mut rx_web_service) =
+            tokio::sync::mpsc::channel::<CommandRequest>(100);
 
         let app = test::init_service(
             App::new()
@@ -427,7 +417,10 @@ mod tests {
 
         tokio::spawn(async move {
             let req = rx_web_service.recv().await.unwrap();
-            req.reply.send(Err(anyhow::anyhow!("error"))).unwrap();
+            req.reply
+                .unwrap()
+                .send(Err(anyhow::anyhow!("error")))
+                .unwrap();
         });
 
         let req = test::TestRequest::post().uri("/reboot/v1").to_request();

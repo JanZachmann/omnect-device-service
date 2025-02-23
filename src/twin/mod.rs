@@ -35,10 +35,7 @@ use serde_json::json;
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook_tokio::Signals;
 use std::{any::TypeId, collections::HashMap, path::Path, time};
-use tokio::{
-    select,
-    sync::{mpsc, oneshot, Mutex},
-};
+use tokio::{select, sync::mpsc};
 
 #[derive(PartialEq)]
 enum TwinState {
@@ -59,7 +56,7 @@ pub struct Twin {
 
 impl Twin {
     async fn new(
-        tx_web_service: mpsc::Sender<web_service::Request>,
+        tx_web_service: mpsc::Sender<Vec<CommandRequest>>,
         tx_reported_properties: mpsc::Sender<serde_json::Value>,
         tx_outgoing_message: mpsc::Sender<IotMessage>,
     ) -> Result<Self> {
@@ -241,38 +238,38 @@ impl Twin {
         Ok(restart_twin)
     }
 
-    async fn handle_command(
-        &mut self,
-        cmd: Command,
-        reply: Option<oneshot::Sender<CommandResult>>,
-    ) -> Result<()> {
-        let cmd_string = format!("{cmd:?}");
+    async fn handle_command(&mut self, requests: Vec<CommandRequest>) -> Result<()> {
+        for req in requests {
+            let cmd = req.command;
+            let reply = req.reply;
+            let cmd_string = format!("{cmd:?}");
 
-        let feature = self
-            .features
-            .get_mut(&cmd.feature_id())
-            .context("handle_command: failed to get feature mutable")?;
+            let feature = self
+                .features
+                .get_mut(&cmd.feature_id())
+                .context("handle_command: failed to get feature mutable")?;
 
-        ensure!(
-            feature.is_enabled(),
-            "handle_command: feature is disabled {}",
-            feature.name()
-        );
+            ensure!(
+                feature.is_enabled(),
+                "handle_command: feature is disabled {}",
+                feature.name()
+            );
 
-        info!("handle_command: {}({cmd_string})", feature.name());
+            info!("handle_command: {}({cmd_string})", feature.name());
 
-        let result = feature.command(cmd).await;
+            let result = feature.command(cmd).await;
 
-        match &result {
-            Ok(inner_result) => {
-                info!("handle_command: {cmd_string} succeeded with result: {inner_result:?}")
+            match &result {
+                Ok(inner_result) => {
+                    info!("handle_command: {cmd_string} succeeded with result: {inner_result:?}")
+                }
+                Err(e) => error!("handle_command: {cmd_string} returned error: {e:#}"),
             }
-            Err(e) => error!("handle_command: {cmd_string} returned error: {e:#}"),
-        }
 
-        if let Some(reply) = reply {
-            if reply.send(result).is_err() {
-                error!("handle_command: {cmd_string} receiver dropped");
+            if let Some(reply) = reply {
+                if reply.send(result).is_err() {
+                    error!("handle_command: {cmd_string} receiver dropped");
+                }
             }
         }
 
@@ -325,11 +322,11 @@ impl Twin {
 
     pub async fn run() -> Result<()> {
         let (tx_connection_status, mut rx_connection_status) = mpsc::channel(100);
-        let (tx_twin_desired, mut rx_twin_desired) = mpsc::channel(100);
-        let (tx_direct_method, mut rx_direct_method) = mpsc::channel(100);
+        let (tx_twin_desired, rx_twin_desired) = mpsc::channel(100);
+        let (tx_direct_method, rx_direct_method) = mpsc::channel(100);
         let (tx_reported_properties, mut rx_reported_properties) = mpsc::channel(100);
         let (tx_outgoing_message, mut rx_outgoing_message) = mpsc::channel(100);
-        let (tx_web_service, mut rx_web_service) = mpsc::channel(100);
+        let (tx_web_service, rx_web_service) = mpsc::channel(100);
 
         // load env vars from /usr/lib/os-release, e.g. to determine feature availability
         dotenvy::from_path_override(Path::new(&format!(
@@ -349,20 +346,62 @@ impl Twin {
 
         systemd::sd_notify_ready();
 
+        let s = vec![
+            tokio_stream::wrappers::ReceiverStream::new(rx_direct_method)
+                .filter_map(|dm| async move {
+                    match Command::from_direct_method(&dm) {
+                        Ok(command) => Some(vec![CommandRequest {
+                            command,
+                            reply: Some(dm.responder),
+                        }]),
+                        Err(e) => {
+                            error!(
+                            "parsing direct method: {} with payload: {} failed with error: {e:#}",
+                            dm.name, dm.payload
+                        );
+                            if dm.responder.send(Err(e)).is_err() {
+                                error!("direct method response receiver dropped")
+                            }
+                            None
+                        }
+                    }
+                })
+                .boxed(),
+            tokio_stream::wrappers::ReceiverStream::new(rx_twin_desired)
+                .filter_map(|twin| async move {
+                    let c: Vec<CommandRequest> = Command::from_desired_property(twin)
+                        .iter()
+                        .map(|cmd| CommandRequest {
+                            command: cmd.clone(),
+                            reply: None,
+                        })
+                        .collect();
+
+                    c.is_empty().then_some(c)
+                })
+                .boxed(),
+            tokio_stream::wrappers::ReceiverStream::new(rx_web_service).boxed(),
+        ];
+
+        let x= twin.features
+            .values_mut()
+            .filter_map(|f| {
+                if f.is_enabled() {
+                    f.event_stream().unwrap()
+                } else {
+                    None
+                }
+            })
+            .chain(s);
+
         tokio::pin! {
             let client_created = Self::connect_iothub_client(&client_builder);
             let trigger_watchdog = match systemd::watchdog::WatchdogManager::init().await {
                 None => futures_util::stream::empty::<tokio::time::Instant>().boxed(),
                 Some(interval) => tokio_stream::wrappers::IntervalStream::new(interval).boxed(),
             };
-            let refresh_features = futures::stream::select_all::select_all(twin
-                .features
-                .values_mut()
-                .filter_map(|f| if f.is_enabled() { f.event_stream().unwrap() } else { None }
-            ));
+            let command_requests = futures::stream::select_all::select_all(x);
         };
-
-        let guard = Mutex::new(());
 
         loop {
             select! (
@@ -371,17 +410,14 @@ impl Twin {
                 biased;
 
                 Some(_) = trigger_watchdog.next() => {
-                    let _guard = guard.lock().await;
                     systemd::watchdog::WatchdogManager::notify().await?;
                 },
                 _ = signals.next() => {
-                    let _guard = guard.lock().await;
                     twin.shutdown(&mut rx_reported_properties, &mut rx_outgoing_message).await;
                     signals.handle().close();
                     return Ok(())
                 },
                 result = &mut client_created, if twin.client.is_none() => {
-                    let _guard = guard.lock().await;
                     match result {
                         Ok(client) => {
                             info!("iothub client created");
@@ -395,67 +431,26 @@ impl Twin {
                     }
                 },
                 Some(status) = rx_connection_status.recv() => {
-                    let _guard = guard.lock().await;
                     if twin.handle_connection_status(status).await? {
                         twin.reset_client_with_delay(Some(time::Duration::from_secs(1))).await;
                         client_created.set(Self::connect_iothub_client(&client_builder));
                     };
                 },
-                result = async {
-                    select! (
-                        // random access order in 2nd select! macro
-                        Some(update_desired) = rx_twin_desired.recv() => {
-                            let _guard = guard.lock().await;
-                            for cmd in Command::from_desired_property(update_desired) {
-                                twin.handle_command(cmd, None).await?
-                            }
-                        },
-                        Some(reported) = rx_reported_properties.recv() => {
-                            let _guard = guard.lock().await;
-                            twin.client
-                                .as_ref()
-                                .context("couldn't report properties since client not present")?
-                                .twin_report(reported)?
-                        },
-                        Some(direct_method) = rx_direct_method.recv() => {
-                            let _guard = guard.lock().await;
-                            match Command::from_direct_method(&direct_method) {
-                                Ok(cmd) => twin.handle_command(cmd, Some(direct_method.responder)).await?,
-                                Err(e) => {
-                                    error!("parsing direct method: {} with payload: {} failed with error: {e:#}",
-                                        direct_method.name, direct_method.payload);
-                                    if direct_method.responder.send(Err(e)).is_err() {
-                                        error!("direct method response receiver dropped")
-                                    }
-                                },
-                            }
-                        },
-                        Some(message) = rx_outgoing_message.recv() => {
-                            let _guard = guard.lock().await;
-                            twin.client
-                                .as_ref()
-                                .context("couldn't send msg since client not present")?
-                                .send_d2c_message(message)?
-                        },
-                        Some(request) = rx_web_service.recv() => {
-                            let _guard = guard.lock().await;
-                            twin.handle_command(request.command, Some(request.reply)).await?
-                        },
-                        command = refresh_features.select_next_some() => {
-                            let _guard = guard.lock().await;
-                            let feature = twin
-                                .features
-                                .get_mut(&command.feature_id())
-                                .context("event stream: failed to get feature mutable")?;
-
-                            ensure!(feature.is_enabled(), "event stream: feature is disabled {}", feature.name());
-                            info!("event stream: {}({command:?})", feature.name());
-                            feature.command(command).await?;
-                        },
-                    );
-
-                    Ok::<(), anyhow::Error>(())
-                } => result?,
+                requests = command_requests.select_next_some() => {
+                    twin.handle_command(requests).await?
+                },
+                Some(reported) = rx_reported_properties.recv() => {
+                    twin.client
+                        .as_ref()
+                        .context("couldn't report properties since client not present")?
+                        .twin_report(reported)?
+                },
+                Some(message) = rx_outgoing_message.recv() => {
+                    twin.client
+                        .as_ref()
+                        .context("couldn't send msg since client not present")?
+                        .send_d2c_message(message)?
+                },
             );
         }
     }
