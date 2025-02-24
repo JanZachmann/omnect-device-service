@@ -121,9 +121,9 @@ impl Feature for FirmwareUpdate {
         env::var("SUPPRESS_FIRMWARE_UPDATE") != Ok("true".to_string())
     }
 
-    async fn command(&mut self, cmd: Command) -> CommandResult {
+    async fn command(&mut self, cmd: &Command) -> CommandResult {
         match cmd {
-            Command::LoadFirmwareUpdate(cmd) => self.load(cmd.update_file_path),
+            Command::LoadFirmwareUpdate(cmd) => self.load(&cmd.update_file_path),
             Command::RunFirmwareUpdate(cmd) => self.run(cmd.validate_iothub_connection).await,
             _ => bail!("unexpected command"),
         }

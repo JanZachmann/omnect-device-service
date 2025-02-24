@@ -23,7 +23,7 @@ cfg_if::cfg_if! {
     }
 }
 
-use super::{systemd, web_service};
+use crate::{systemd, web_service};
 use anyhow::{ensure, Context, Result};
 use azure_iot_sdk::client::*;
 use dotenvy;
@@ -52,6 +52,7 @@ pub struct Twin {
     state: TwinState,
     features: HashMap<TypeId, Box<dyn Feature>>,
     update_validation: UpdateValidation,
+    waiting_for_reboot: bool,
 }
 
 impl Twin {
@@ -65,6 +66,7 @@ impl Twin {
         let client = None;
         let web_service = web_service::WebService::run(tx_web_service.clone()).await?;
         let state = TwinState::Uninitialized;
+        let waiting_for_reboot = false;
 
         let features = HashMap::from([
             (
@@ -117,6 +119,7 @@ impl Twin {
             state,
             features,
             update_validation,
+            waiting_for_reboot,
         };
 
         twin.connect_web_service().await?;
@@ -257,7 +260,7 @@ impl Twin {
 
             info!("handle_command: {}({cmd_string})", feature.name());
 
-            let result = feature.command(cmd).await;
+            let result = feature.command(&cmd).await;
 
             match &result {
                 Ok(inner_result) => {
@@ -270,6 +273,11 @@ impl Twin {
                 if reply.send(result).is_err() {
                     error!("handle_command: {cmd_string} receiver dropped");
                 }
+            }
+
+            if cmd.eq(&Command::Reboot) {
+                self.waiting_for_reboot = true;
+                break;
             }
         }
 
@@ -320,6 +328,19 @@ impl Twin {
         }
     }
 
+    fn feature_streams(&mut self) -> Vec<EventStream> {
+        self.features
+            .values_mut()
+            .filter_map(|f| {
+                if f.is_enabled() {
+                    f.event_stream().unwrap()
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub async fn run() -> Result<()> {
         let (tx_connection_status, mut rx_connection_status) = mpsc::channel(100);
         let (tx_twin_desired, rx_twin_desired) = mpsc::channel(100);
@@ -346,67 +367,25 @@ impl Twin {
 
         systemd::sd_notify_ready();
 
-        let s = vec![
-            tokio_stream::wrappers::ReceiverStream::new(rx_direct_method)
-                .filter_map(|dm| async move {
-                    match Command::from_direct_method(&dm) {
-                        Ok(command) => Some(vec![CommandRequest {
-                            command,
-                            reply: Some(dm.responder),
-                        }]),
-                        Err(e) => {
-                            error!(
-                            "parsing direct method: {} with payload: {} failed with error: {e:#}",
-                            dm.name, dm.payload
-                        );
-                            if dm.responder.send(Err(e)).is_err() {
-                                error!("direct method response receiver dropped")
-                            }
-                            None
-                        }
-                    }
-                })
-                .boxed(),
-            tokio_stream::wrappers::ReceiverStream::new(rx_twin_desired)
-                .filter_map(|twin| async move {
-                    let c: Vec<CommandRequest> = Command::from_desired_property(twin)
-                        .iter()
-                        .map(|cmd| CommandRequest {
-                            command: cmd.clone(),
-                            reply: None,
-                        })
-                        .collect();
-
-                    c.is_empty().then_some(c)
-                })
-                .boxed(),
-            tokio_stream::wrappers::ReceiverStream::new(rx_web_service).boxed(),
-        ];
-
-        let x= twin.features
-            .values_mut()
-            .filter_map(|f| {
-                if f.is_enabled() {
-                    f.event_stream().unwrap()
-                } else {
-                    None
-                }
-            })
-            .chain(s);
-
         tokio::pin! {
             let client_created = Self::connect_iothub_client(&client_builder);
             let trigger_watchdog = match systemd::watchdog::WatchdogManager::init().await {
                 None => futures_util::stream::empty::<tokio::time::Instant>().boxed(),
                 Some(interval) => tokio_stream::wrappers::IntervalStream::new(interval).boxed(),
             };
-            let command_requests = futures::stream::select_all::select_all(x);
+            let command_requests = futures::stream::select_all::select_all(
+                twin.feature_streams().into_iter().chain(
+                vec![
+                    Self::direct_method_stream(rx_direct_method),
+                    Self::desired_properties_stream(rx_twin_desired),
+                    Self::web_service_stream(rx_web_service),
+                ]
+            ));
         };
 
         loop {
             select! (
-                // we enforce top down order in 1st select! macro to handle sd-notify, signals and connections status
-                // with priority over events in the 2nd select!
+                // we enforce top down order to handle select! branches
                 biased;
 
                 Some(_) = trigger_watchdog.next() => {
@@ -436,7 +415,7 @@ impl Twin {
                         client_created.set(Self::connect_iothub_client(&client_builder));
                     };
                 },
-                requests = command_requests.select_next_some() => {
+                requests = command_requests.select_next_some(), if !twin.waiting_for_reboot => {
                     twin.handle_command(requests).await?
                 },
                 Some(reported) = rx_reported_properties.recv() => {
@@ -469,5 +448,48 @@ impl Twin {
         builder.build_module_client(
             &std::env::var("CONNECTION_STRING").context("connection string missing")?,
         )
+    }
+
+    fn direct_method_stream(rx: mpsc::Receiver<DirectMethod>) -> EventStream {
+        tokio_stream::wrappers::ReceiverStream::new(rx)
+            .filter_map(|dm| async move {
+                match Command::from_direct_method(&dm) {
+                    Ok(command) => Some(vec![CommandRequest {
+                        command,
+                        reply: Some(dm.responder),
+                    }]),
+                    Err(e) => {
+                        error!(
+                            "parsing direct method: {} with payload: {} failed with error: {e:#}",
+                            dm.name, dm.payload
+                        );
+                        if dm.responder.send(Err(e)).is_err() {
+                            error!("direct method response receiver dropped")
+                        }
+                        None
+                    }
+                }
+            })
+            .boxed()
+    }
+
+    fn desired_properties_stream(rx: mpsc::Receiver<TwinUpdate>) -> EventStream {
+        tokio_stream::wrappers::ReceiverStream::new(rx)
+            .filter_map(|twin| async move {
+                let c: Vec<CommandRequest> = Command::from_desired_property(twin)
+                    .iter()
+                    .map(|cmd| CommandRequest {
+                        command: cmd.clone(),
+                        reply: None,
+                    })
+                    .collect();
+
+                c.is_empty().then_some(c)
+            })
+            .boxed()
+    }
+
+    fn web_service_stream(rx: mpsc::Receiver<Vec<CommandRequest>>) -> EventStream {
+        tokio_stream::wrappers::ReceiverStream::new(rx).boxed()
     }
 }

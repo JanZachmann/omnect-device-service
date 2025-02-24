@@ -1,7 +1,8 @@
-use super::super::bootloader_env;
-use super::super::systemd;
-use super::{feature::*, Feature};
-use crate::web_service;
+use crate::{
+    bootloader_env, systemd,
+    twin::{feature::*, Feature},
+    web_service,
+};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use azure_iot_sdk::client::IotMessage;
@@ -88,7 +89,7 @@ impl Feature for FactoryReset {
         self.handle_factory_reset_status().await
     }
 
-    async fn command(&mut self, cmd: Command) -> CommandResult {
+    async fn command(&mut self, cmd: &Command) -> CommandResult {
         info!("factory reset requested: {cmd:?}");
 
         let Command::FactoryReset(cmd) = cmd else {
@@ -156,7 +157,7 @@ impl FactoryReset {
         .context("report_factory_reset_status: send")
     }
 
-    async fn reset_to_factory_settings(&self, cmd: FactoryResetCommand) -> CommandResult {
+    async fn reset_to_factory_settings(&self, cmd: &FactoryResetCommand) -> CommandResult {
         let keys = FactoryReset::factory_reset_keys()?;
         for topic in &cmd.preserve {
             let topic = String::from(topic.to_string().trim_matches('"'));

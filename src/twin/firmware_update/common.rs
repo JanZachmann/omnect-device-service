@@ -64,14 +64,14 @@ macro_rules! bootloader_updated_file_path {
     }};
 }
 
-pub(super) use bootloader_updated_file_path;
-pub(super) use du_config_path;
-pub(super) use log_file_path;
-pub(super) use no_bootloader_updated_file_path;
+pub(crate) use bootloader_updated_file_path;
+pub(crate) use du_config_path;
+pub(crate) use log_file_path;
+pub(crate) use no_bootloader_updated_file_path;
 #[cfg(not(feature = "mock"))]
-pub(super) use pubkey_file_path;
-pub(super) use update_folder_path;
-pub(super) use update_validation_config_path;
+pub(crate) use pubkey_file_path;
+pub(crate) use update_folder_path;
+pub(crate) use update_validation_config_path;
 
 pub fn json_to_file<T, P>(value: &T, path: P, create: bool) -> Result<()>
 where

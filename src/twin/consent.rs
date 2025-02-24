@@ -1,5 +1,7 @@
-use super::{feature::*, Feature};
-use crate::consent_path;
+use crate::{
+    consent_path,
+    twin::{feature::*, Feature},
+};
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
 use azure_iot_sdk::client::IotMessage;
@@ -96,7 +98,7 @@ impl Feature for DeviceUpdateConsent {
         Ok(Some(stream))
     }
 
-    async fn command(&mut self, cmd: Command) -> CommandResult {
+    async fn command(&mut self, cmd: &Command) -> CommandResult {
         match cmd {
             Command::FileModified(file) => {
                 self.report_user_consent(&file.path).await?;
@@ -118,10 +120,10 @@ impl DeviceUpdateConsent {
     const USER_CONSENT_VERSION: u8 = 1;
     const ID: &'static str = "device_update_consent";
 
-    fn user_consent(&self, cmd: UserConsentCommand) -> CommandResult {
+    fn user_consent(&self, cmd: &UserConsentCommand) -> CommandResult {
         info!("user consent requested: {cmd:?}");
 
-        for (component, version) in cmd.user_consent {
+        for (component, version) in &cmd.user_consent {
             ensure!(
                 !component.contains(std::path::is_separator),
                 "user_consent: invalid component name: {component}"
@@ -160,9 +162,9 @@ impl DeviceUpdateConsent {
 
     async fn update_general_consent(
         &self,
-        desired_consents: DesiredGeneralConsentCommand,
+        desired_consents: &DesiredGeneralConsentCommand,
     ) -> CommandResult {
-        let mut new_consents = desired_consents.general_consent;
+        let mut new_consents = desired_consents.general_consent.clone();
         // enforce entries only exists once
         new_consents.sort_by_key(|name| name.to_string());
         new_consents.dedup();

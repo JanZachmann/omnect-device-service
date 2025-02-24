@@ -1,8 +1,7 @@
-use super::common::*;
 use crate::{
     bootloader_env,
     systemd::{self, unit::UnitAction, watchdog::WatchdogManager},
-    twin::system_info::RootPartition,
+    twin::{firmware_update::common::*, system_info::RootPartition},
 };
 use anyhow::{bail, Context, Result};
 use log::{debug, error, info};

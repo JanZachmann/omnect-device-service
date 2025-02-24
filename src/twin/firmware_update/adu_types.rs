@@ -2,92 +2,92 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct UpdateId {
-    pub(super) provider: String,
-    pub(super) name: String,
-    pub(super) version: String,
+pub(crate) struct UpdateId {
+    pub(crate) provider: String,
+    pub(crate) name: String,
+    pub(crate) version: String,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct UserConsentHandlerProperties {
-    pub(super) installed_criteria: String,
+pub(crate) struct UserConsentHandlerProperties {
+    pub(crate) installed_criteria: String,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct SWUpdateHandlerProperties {
-    pub(super) installed_criteria: String,
-    pub(super) swu_file_name: String,
-    pub(super) arguments: String,
-    pub(super) script_file_name: String,
+pub(crate) struct SWUpdateHandlerProperties {
+    pub(crate) installed_criteria: String,
+    pub(crate) swu_file_name: String,
+    pub(crate) arguments: String,
+    pub(crate) script_file_name: String,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(untagged)]
-pub(super) enum HandlerProperties {
+pub(crate) enum HandlerProperties {
     UserConsent(UserConsentHandlerProperties),
     SWUpdate(SWUpdateHandlerProperties),
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct Step {
+pub(crate) struct Step {
     #[serde(rename = "type")]
-    pub(super) step_type: String,
-    pub(super) description: String,
-    pub(super) handler: String,
-    pub(super) files: Vec<String>,
-    pub(super) handler_properties: HandlerProperties,
+    pub(crate) step_type: String,
+    pub(crate) description: String,
+    pub(crate) handler: String,
+    pub(crate) files: Vec<String>,
+    pub(crate) handler_properties: HandlerProperties,
 }
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct Instructions {
-    pub(super) steps: Vec<Step>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct File {
-    pub(super) filename: String,
-    pub(super) size_in_bytes: u64,
-    pub(super) hashes: HashMap<String, String>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub(super) struct Compatibility {
-    pub(super) manufacturer: String,
-    pub(super) model: String,
-    pub(super) compatibilityid: String,
+pub(crate) struct Instructions {
+    pub(crate) steps: Vec<Step>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct ImportManifest {
-    pub(super) update_id: UpdateId,
-    pub(super) is_deployable: bool,
-    pub(super) compatibility: Vec<Compatibility>,
-    pub(super) instructions: Instructions,
-    pub(super) files: Vec<File>,
-    pub(super) created_date_time: String,
-    pub(super) manifest_version: String,
+pub(crate) struct File {
+    pub(crate) filename: String,
+    pub(crate) size_in_bytes: u64,
+    pub(crate) hashes: HashMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct Compatibility {
+    pub(crate) manufacturer: String,
+    pub(crate) model: String,
+    pub(crate) compatibilityid: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportManifest {
+    pub(crate) update_id: UpdateId,
+    pub(crate) is_deployable: bool,
+    pub(crate) compatibility: Vec<Compatibility>,
+    pub(crate) instructions: Instructions,
+    pub(crate) files: Vec<File>,
+    pub(crate) created_date_time: String,
+    pub(crate) manifest_version: String,
 }
 
 #[derive(Deserialize)]
-pub(super) struct AdditionalDeviceProperties {
-    pub(super) compatibilityid: String,
+pub(crate) struct AdditionalDeviceProperties {
+    pub(crate) compatibilityid: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct Agent {
-    pub(super) manufacturer: String,
-    pub(super) model: String,
-    pub(super) additional_device_properties: AdditionalDeviceProperties,
+pub(crate) struct Agent {
+    pub(crate) manufacturer: String,
+    pub(crate) model: String,
+    pub(crate) additional_device_properties: AdditionalDeviceProperties,
 }
 
 #[derive(Deserialize)]
-pub(super) struct DeviceUpdateConfig {
-    pub(super) agents: Vec<Agent>,
+pub(crate) struct DeviceUpdateConfig {
+    pub(crate) agents: Vec<Agent>,
 }

@@ -1,4 +1,4 @@
-use super::{
+use crate::twin::{
     feature::{Command as FeatureCommand, CommandResult},
     Feature,
 };
@@ -152,7 +152,7 @@ impl Feature for SshTunnel {
         self.report().await
     }
 
-    async fn command(&mut self, cmd: FeatureCommand) -> CommandResult {
+    async fn command(&mut self, cmd: &FeatureCommand) -> CommandResult {
         match cmd {
             FeatureCommand::DesiredUpdateDeviceSshCa(cmd) => self.update_device_ssh_ca(cmd).await,
             FeatureCommand::CloseSshTunnel(cmd) => self.close_ssh_tunnel(cmd).await,
@@ -175,7 +175,7 @@ impl SshTunnel {
         }
     }
 
-    async fn update_device_ssh_ca(&self, args: UpdateDeviceSshCaCommand) -> CommandResult {
+    async fn update_device_ssh_ca(&self, args: &UpdateDeviceSshCaCommand) -> CommandResult {
         info!("update device ssh cert requested");
 
         let mut child = exec_as(SSH_TUNNEL_USER, "tee")
@@ -214,7 +214,7 @@ impl SshTunnel {
         Ok(None)
     }
 
-    async fn get_ssh_pub_key(&self, args: GetSshPubKeyCommand) -> CommandResult {
+    async fn get_ssh_pub_key(&self, args: &GetSshPubKeyCommand) -> CommandResult {
         info!("ssh pub key requested");
 
         let (priv_key_path, pub_key_path) = (
@@ -290,7 +290,7 @@ impl SshTunnel {
         Ok(str::from_utf8(&output.stdout)?.to_string())
     }
 
-    async fn open_ssh_tunnel(&self, args: OpenSshTunnelCommand) -> CommandResult {
+    async fn open_ssh_tunnel(&self, args: &OpenSshTunnelCommand) -> CommandResult {
         info!("open ssh tunnel requested");
 
         let ssh_tunnel_permit = match self.ssh_tunnel_semaphore.clone().try_acquire_owned() {
@@ -460,7 +460,7 @@ impl SshTunnel {
         }
     }
 
-    async fn close_ssh_tunnel(&self, args: CloseSshTunnelCommand) -> CommandResult {
+    async fn close_ssh_tunnel(&self, args: &CloseSshTunnelCommand) -> CommandResult {
         let control_socket_path = control_socket_path!(&args.tunnel_id);
 
         info!(

@@ -1,6 +1,8 @@
-use super::super::systemd;
-use super::web_service;
-use super::{feature::*, Feature};
+use crate::{
+    systemd,
+    twin::{feature::*, Feature},
+    web_service,
+};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use azure_iot_sdk::client::IotMessage;
@@ -48,7 +50,7 @@ impl Feature for Reboot {
         self.report_wait_online_timeout().await
     }
 
-    async fn command(&mut self, cmd: Command) -> CommandResult {
+    async fn command(&mut self, cmd: &Command) -> CommandResult {
         match cmd {
             Command::Reboot => self.reboot().await,
             Command::SetWaitOnlineTimeout(cmd) => self.set_wait_online_timeout(cmd).await,
@@ -69,7 +71,7 @@ impl Reboot {
         Ok(None)
     }
 
-    async fn set_wait_online_timeout(&self, cmd: SetWaitOnlineTimeoutCommand) -> CommandResult {
+    async fn set_wait_online_timeout(&self, cmd: &SetWaitOnlineTimeoutCommand) -> CommandResult {
         info!("set wait_online_timeout requested: {cmd:?}");
 
         systemd::networkd::set_networkd_wait_online_timeout(

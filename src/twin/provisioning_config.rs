@@ -1,4 +1,4 @@
-use super::{feature::*, Feature};
+use crate::twin::{feature::*, Feature};
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
 use azure_iot_sdk::client::IotMessage;
@@ -156,7 +156,7 @@ impl Feature for ProvisioningConfig {
         }
     }
 
-    async fn command(&mut self, cmd: Command) -> CommandResult {
+    async fn command(&mut self, cmd: &Command) -> CommandResult {
         let Command::Interval(_) = cmd else {
             bail!("unexpected event: {cmd:?}")
         };

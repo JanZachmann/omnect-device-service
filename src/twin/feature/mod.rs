@@ -186,7 +186,7 @@ pub(crate) trait Feature {
         Ok(None)
     }
 
-    async fn command(&mut self, _cmd: Command) -> CommandResult {
+    async fn command(&mut self, _cmd: &Command) -> CommandResult {
         unimplemented!();
     }
 }

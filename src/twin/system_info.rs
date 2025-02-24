@@ -1,5 +1,7 @@
-use super::web_service;
-use super::{feature::*, Feature};
+use crate::{
+    twin::{feature::*, Feature},
+    web_service,
+};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use azure_iot_sdk::client::{IotHubClient, IotMessage};
@@ -234,7 +236,7 @@ impl Feature for SystemInfo {
         })
     }
 
-    async fn command(&mut self, cmd: Command) -> CommandResult {
+    async fn command(&mut self, cmd: &Command) -> CommandResult {
         match cmd {
             Command::Interval(_) => {
                 self.metrics().await?;
