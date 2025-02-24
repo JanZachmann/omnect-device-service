@@ -1,17 +1,16 @@
-pub(crate) mod feature;
+mod consent;
+mod factory_reset;
+pub mod feature;
+mod firmware_update;
 #[cfg(test)]
 #[path = "mod_test.rs"]
 mod mod_test;
-
-mod consent;
-mod factory_reset;
-mod firmware_update;
 mod modem_info;
 mod network;
 mod provisioning_config;
 mod reboot;
 mod ssh_tunnel;
-pub mod system_info;
+mod system_info;
 mod wifi_commissioning;
 
 cfg_if::cfg_if! {
