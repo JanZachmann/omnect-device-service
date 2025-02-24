@@ -1,7 +1,6 @@
-use crate::twin::network;
-
-use super::{
-    consent, factory_reset, firmware_update, reboot, ssh_tunnel, TwinUpdate, TwinUpdateState,
+use crate::twin::{
+    consent, factory_reset, firmware_update, network, reboot, ssh_tunnel, TwinUpdate,
+    TwinUpdateState,
 };
 use anyhow::{bail, ensure, Result};
 use async_trait::async_trait;
