@@ -22,7 +22,7 @@ cfg_if::cfg_if! {
     }
 }
 
-use crate::{systemd, web_service};
+use crate::{systemd, twin::feature::Command, web_service};
 use anyhow::{ensure, Context, Result};
 use azure_iot_sdk::client::*;
 use dotenvy;
@@ -35,6 +35,7 @@ use signal_hook::consts::TERM_SIGNALS;
 use signal_hook_tokio::Signals;
 use std::{any::TypeId, collections::HashMap, path::Path, time};
 use tokio::{select, sync::mpsc};
+use tokio_stream::wrappers::{IntervalStream, ReceiverStream};
 
 #[derive(PartialEq)]
 enum TwinState {
@@ -46,24 +47,24 @@ enum TwinState {
 pub struct Twin {
     client: Option<IotHubClient>,
     web_service: Option<web_service::WebService>,
+    tx_command_request: mpsc::Sender<Vec<CommandRequest>>,
     tx_reported_properties: mpsc::Sender<serde_json::Value>,
     tx_outgoing_message: mpsc::Sender<IotMessage>,
     state: TwinState,
     features: HashMap<TypeId, Box<dyn Feature>>,
-    update_validation: UpdateValidation,
     waiting_for_reboot: bool,
 }
 
 impl Twin {
     async fn new(
-        tx_web_service: mpsc::Sender<Vec<CommandRequest>>,
+        tx_command_request: mpsc::Sender<Vec<CommandRequest>>,
         tx_reported_properties: mpsc::Sender<serde_json::Value>,
         tx_outgoing_message: mpsc::Sender<IotMessage>,
     ) -> Result<Self> {
         // has to be called before iothub client authentication
-        let update_validation = UpdateValidation::new()?;
+        let update_validation = UpdateValidation::new().await?;
         let client = None;
-        let web_service = web_service::WebService::run(tx_web_service.clone()).await?;
+        let web_service = web_service::WebService::run(tx_command_request.clone()).await?;
         let state = TwinState::Uninitialized;
         let waiting_for_reboot = false;
 
@@ -78,7 +79,8 @@ impl Twin {
             ),
             (
                 TypeId::of::<firmware_update::FirmwareUpdate>(),
-                Box::new(firmware_update::FirmwareUpdate::default()) as Box<dyn Feature>,
+                Box::new(firmware_update::FirmwareUpdate::new(update_validation))
+                    as Box<dyn Feature>,
             ),
             (
                 TypeId::of::<modem_info::ModemInfo>(),
@@ -113,11 +115,11 @@ impl Twin {
         let twin = Twin {
             client,
             web_service,
+            tx_command_request,
             tx_reported_properties,
             tx_outgoing_message,
             state,
             features,
-            update_validation,
             waiting_for_reboot,
         };
 
@@ -186,7 +188,13 @@ impl Twin {
                          * the update validation test "wait_for_system_running" enforces that
                          * omnect-device-service already notified its own success
                          */
-                        self.update_validation.set_authenticated(true).await?;
+                        self.tx_command_request
+                            .send(vec![CommandRequest {
+                                command: Command::ValidateUpdateAuthenticated(true),
+                                reply: None,
+                            }])
+                            .await
+                            .context("handle_connection_status: requests receiver dropped")?;
                     };
 
                     self.connect_twin().await?;
@@ -221,7 +229,13 @@ impl Twin {
                         info!("Failed to connect to iothub: {reason:?}");
 
                         if self.state == TwinState::Uninitialized {
-                            self.update_validation.set_authenticated(false).await?;
+                            self.tx_command_request
+                                .send(vec![CommandRequest {
+                                    command: Command::ValidateUpdateAuthenticated(false),
+                                    reply: None,
+                                }])
+                                .await
+                                .context("handle_connection_status: requests receiver dropped")?;
                         };
                     }
                     UnauthenticatedReason::DeviceDisabled => {
@@ -240,7 +254,7 @@ impl Twin {
         Ok(restart_twin)
     }
 
-    async fn handle_command(&mut self, requests: Vec<CommandRequest>) -> Result<()> {
+    async fn handle_requests(&mut self, requests: Vec<CommandRequest>) -> Result<()> {
         for req in requests {
             let cmd = req.command;
             let reply = req.reply;
@@ -249,28 +263,28 @@ impl Twin {
             let feature = self
                 .features
                 .get_mut(&cmd.feature_id())
-                .context("handle_command: failed to get feature mutable")?;
+                .context("handle_requests: failed to get feature mutable")?;
 
             ensure!(
                 feature.is_enabled(),
-                "handle_command: feature is disabled {}",
+                "handle_requests: feature is disabled {}",
                 feature.name()
             );
 
-            info!("handle_command: {}({cmd_string})", feature.name());
+            info!("handle_requests: {}({cmd_string})", feature.name());
 
             let result = feature.command(&cmd).await;
 
             match &result {
                 Ok(inner_result) => {
-                    info!("handle_command: {cmd_string} succeeded with result: {inner_result:?}")
+                    info!("handle_requests: {cmd_string} succeeded with result: {inner_result:?}")
                 }
-                Err(e) => error!("handle_command: {cmd_string} returned error: {e:#}"),
+                Err(e) => error!("handle_requests: {cmd_string} returned error: {e:#}"),
             }
 
             if let Some(reply) = reply {
                 if reply.send(result).is_err() {
-                    error!("handle_command: {cmd_string} receiver dropped");
+                    error!("handle_requests: {cmd_string} receiver dropped");
                 }
             }
 
@@ -327,12 +341,12 @@ impl Twin {
         }
     }
 
-    fn feature_streams(&mut self) -> Vec<EventStream> {
+    fn feature_command_request_streams(&mut self) -> Vec<CommandRequestStream> {
         self.features
             .values_mut()
             .filter_map(|f| {
                 if f.is_enabled() {
-                    f.event_stream().unwrap()
+                    f.command_request_stream().unwrap()
                 } else {
                     None
                 }
@@ -346,7 +360,7 @@ impl Twin {
         let (tx_direct_method, rx_direct_method) = mpsc::channel(100);
         let (tx_reported_properties, mut rx_reported_properties) = mpsc::channel(100);
         let (tx_outgoing_message, mut rx_outgoing_message) = mpsc::channel(100);
-        let (tx_web_service, rx_web_service) = mpsc::channel(100);
+        let (tx_command_request, rx_command_request) = mpsc::channel(100);
 
         // load env vars from /usr/lib/os-release, e.g. to determine feature availability
         dotenvy::from_path_override(Path::new(&format!(
@@ -354,8 +368,12 @@ impl Twin {
             std::env::var("OS_RELEASE_DIR_PATH").unwrap_or_else(|_| "/usr/lib".to_string())
         )))?;
 
-        let mut twin =
-            Self::new(tx_web_service, tx_reported_properties, tx_outgoing_message).await?;
+        let mut twin = Self::new(
+            tx_command_request,
+            tx_reported_properties,
+            tx_outgoing_message,
+        )
+        .await?;
 
         let client_builder = IotHubClient::builder()
             .observe_connection_state(tx_connection_status)
@@ -366,20 +384,18 @@ impl Twin {
 
         systemd::sd_notify_ready();
 
+        let mut command_requests = twin.feature_command_request_streams();
+        command_requests.push(Self::direct_method_stream(rx_direct_method));
+        command_requests.push(Self::desired_properties_stream(rx_twin_desired));
+        command_requests.push(ReceiverStream::new(rx_command_request).boxed());
+
         tokio::pin! {
             let client_created = Self::connect_iothub_client(&client_builder);
             let trigger_watchdog = match systemd::watchdog::WatchdogManager::init().await {
                 None => futures_util::stream::empty::<tokio::time::Instant>().boxed(),
-                Some(interval) => tokio_stream::wrappers::IntervalStream::new(interval).boxed(),
+                Some(interval) => IntervalStream::new(interval).boxed(),
             };
-            let command_requests = futures::stream::select_all::select_all(
-                twin.feature_streams().into_iter().chain(
-                vec![
-                    Self::direct_method_stream(rx_direct_method),
-                    Self::desired_properties_stream(rx_twin_desired),
-                    Self::web_service_stream(rx_web_service),
-                ]
-            ));
+            let command_requests = futures::stream::select_all::select_all(command_requests);
         };
 
         loop {
@@ -415,7 +431,7 @@ impl Twin {
                     };
                 },
                 requests = command_requests.select_next_some(), if !twin.waiting_for_reboot => {
-                    twin.handle_command(requests).await?
+                    twin.handle_requests(requests).await?
                 },
                 Some(reported) = rx_reported_properties.recv() => {
                     twin.client
@@ -449,8 +465,8 @@ impl Twin {
         )
     }
 
-    fn direct_method_stream(rx: mpsc::Receiver<DirectMethod>) -> EventStream {
-        tokio_stream::wrappers::ReceiverStream::new(rx)
+    fn direct_method_stream(rx: mpsc::Receiver<DirectMethod>) -> CommandRequestStream {
+        ReceiverStream::new(rx)
             .filter_map(|dm| async move {
                 match Command::from_direct_method(&dm) {
                     Ok(command) => Some(vec![CommandRequest {
@@ -472,8 +488,8 @@ impl Twin {
             .boxed()
     }
 
-    fn desired_properties_stream(rx: mpsc::Receiver<TwinUpdate>) -> EventStream {
-        tokio_stream::wrappers::ReceiverStream::new(rx)
+    fn desired_properties_stream(rx: mpsc::Receiver<TwinUpdate>) -> CommandRequestStream {
+        ReceiverStream::new(rx)
             .filter_map(|twin| async move {
                 let c: Vec<CommandRequest> = Command::from_desired_property(twin)
                     .iter()
@@ -486,9 +502,5 @@ impl Twin {
                 c.is_empty().then_some(c)
             })
             .boxed()
-    }
-
-    fn web_service_stream(rx: mpsc::Receiver<Vec<CommandRequest>>) -> EventStream {
-        tokio_stream::wrappers::ReceiverStream::new(rx).boxed()
     }
 }

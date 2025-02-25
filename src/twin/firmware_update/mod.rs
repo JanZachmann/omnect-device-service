@@ -24,6 +24,7 @@ use std::{
     time::Duration,
 };
 use tar::Archive;
+use update_validation::UpdateValidation;
 
 static UPDATE_WDT_INTERVAL_SECS: u64 = 600;
 
@@ -94,9 +95,9 @@ pub struct RunUpdateCommand {
     pub validate_iothub_connection: bool,
 }
 
-#[derive(Default)]
 pub struct FirmwareUpdate {
     swu_file_path: Option<String>,
+    update_validation: UpdateValidation,
 }
 
 impl Drop for FirmwareUpdate {
@@ -121,10 +122,21 @@ impl Feature for FirmwareUpdate {
         env::var("SUPPRESS_FIRMWARE_UPDATE") != Ok("true".to_string())
     }
 
+    async fn connect_web_service(&self) -> Result<()> {
+        self.update_validation.report().await;
+        Ok(())
+    }
+
     async fn command(&mut self, cmd: &Command) -> CommandResult {
         match cmd {
             Command::LoadFirmwareUpdate(cmd) => self.load(&cmd.update_file_path),
             Command::RunFirmwareUpdate(cmd) => self.run(cmd.validate_iothub_connection).await,
+            Command::ValidateUpdateAuthenticated(authenticated) => {
+                self.update_validation
+                    .set_authenticated(*authenticated)
+                    .await?;
+                Ok(None)
+            }
             _ => bail!("unexpected command"),
         }
     }
@@ -133,6 +145,13 @@ impl Feature for FirmwareUpdate {
 impl FirmwareUpdate {
     const FIRMWARE_UPDATE_VERSION: u8 = 1;
     const ID: &'static str = "firmware_update";
+
+    pub fn new(update_validation: UpdateValidation) -> Self {
+        FirmwareUpdate {
+            swu_file_path: None,
+            update_validation,
+        }
+    }
 
     fn load<P>(&mut self, path: P) -> CommandResult
     where
@@ -352,7 +371,7 @@ impl FirmwareUpdate {
                 .arg(pubkey_file_path!())
                 .arg("-e")
                 .arg(selection)
-                /*                 .arg("&>>")
+                /* ToDo                .arg("&>>")
                 .arg(log_file_path!()) */
                 .current_dir("/usr/bin")
                 .status()?

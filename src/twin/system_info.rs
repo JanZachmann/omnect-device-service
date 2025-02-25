@@ -213,7 +213,7 @@ impl Feature for SystemInfo {
         self.report().await
     }
 
-    fn event_stream(&mut self) -> EventStreamResult {
+    fn command_request_stream(&mut self) -> CommandRequestStreamResult {
         Ok(match *REFRESH_SYSTEM_INFO_INTERVAL_SECS {
             0 if self.software_info.boot_time.is_none() => {
                 Some(file_created_stream::<SystemInfo>(vec![&TIMESYNC_FILE]))

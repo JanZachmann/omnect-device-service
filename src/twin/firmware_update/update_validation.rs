@@ -1,11 +1,12 @@
 use crate::{
     bootloader_env,
     systemd::{self, unit::UnitAction, watchdog::WatchdogManager},
-    twin::{firmware_update::common::*, system_info::RootPartition},
+    twin::{firmware_update::common::*, system_info::RootPartition, web_service},
 };
 use anyhow::{bail, Context, Result};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use serde_with::{serde_as, DurationMilliSeconds};
 use std::{env, fs, path::Path};
 use tokio::{
@@ -19,7 +20,23 @@ static UPDATE_VALIDATION_FILE: &str = "/run/omnect-device-service/omnect_validat
 // this file is used to signal others that the update validation is successful, by deleting it
 static UPDATE_VALIDATION_COMPLETE_BARRIER_FILE: &str =
     "/run/omnect-device-service/omnect_validate_update_complete_barrier";
+// this file is used to determine a recovery after a failed update validation
+static UPDATE_VALIDATION_FAILED: &str = "//run/omnect-device-service/omnect_validate_update_failed";
 static UPDATE_VALIDATION_TIMEOUT_IN_SECS: u64 = 300;
+
+#[derive(Serialize)]
+enum UpdateValidationStatus {
+    NoUpdate,
+    ValidatingTrial(u8),
+    Recovered,
+    Succeeded,
+}
+
+impl Default for UpdateValidationStatus {
+    fn default() -> Self {
+        UpdateValidationStatus::NoUpdate
+    }
+}
 
 #[serde_as]
 #[derive(Default, Deserialize, Serialize)]
@@ -31,17 +48,17 @@ pub struct UpdateValidation {
     authenticated: bool,
     local_update: bool,
     #[serde(skip)]
-    run_update_validation: bool,
-    #[serde(skip)]
     validation_timeout: Duration,
     #[serde(skip)]
     tx: Option<oneshot::Sender<()>>,
     #[serde(skip)]
     join_handle: Option<JoinHandle<()>>,
+    #[serde(skip)]
+    status: UpdateValidationStatus,
 }
 
 impl UpdateValidation {
-    pub fn new() -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         let mut new_self = UpdateValidation::default();
         let validation_timeout = Duration::from_secs(UPDATE_VALIDATION_TIMEOUT_IN_SECS);
         if let Ok(timeout_secs) = env::var("UPDATE_VALIDATION_TIMEOUT_IN_SECS") {
@@ -57,6 +74,7 @@ impl UpdateValidation {
             // we detected update validation before, but were not validated before
             new_self = json_from_file(UPDATE_VALIDATION_COMPLETE_BARRIER_FILE)?;
             new_self.restart_count += 1;
+            new_self.status = UpdateValidationStatus::ValidatingTrial(new_self.restart_count);
             info!("retry start ({})", new_self.restart_count);
             json_to_file(&new_self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, false)?;
             let now = Duration::from(nix::time::clock_gettime(
@@ -64,13 +82,11 @@ impl UpdateValidation {
             )?);
             new_self.validation_timeout =
                 validation_timeout - (now - new_self.start_monotonic_time);
-            new_self.run_update_validation = true;
         } else if let Ok(true) = Path::new(UPDATE_VALIDATION_FILE).try_exists() {
             info!("first start");
             new_self.start_monotonic_time = Duration::from(nix::time::clock_gettime(
                 nix::time::ClockId::CLOCK_MONOTONIC,
             )?);
-
             // check if there is an update validation config
             if let Ok(true) = Path::new(&update_validation_config_path!()).try_exists() {
                 let config: UpdateValidationConfig =
@@ -81,13 +97,16 @@ impl UpdateValidation {
             json_to_file(&new_self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, true)?;
 
             new_self.validation_timeout = validation_timeout;
-            new_self.run_update_validation = true;
+            new_self.status = UpdateValidationStatus::ValidatingTrial(new_self.restart_count);
+        } else if let Ok(true) = Path::new(UPDATE_VALIDATION_FAILED).try_exists() {
+            info!("recovered after update validation failed");
+            new_self.status = UpdateValidationStatus::Recovered;
         } else {
             info!("no update to be validated");
-            new_self.run_update_validation = false;
+            new_self.status = UpdateValidationStatus::NoUpdate;
         }
 
-        if new_self.run_update_validation {
+        if matches!(new_self.status, UpdateValidationStatus::ValidatingTrial(_)) {
             let (tx, rx) = oneshot::channel();
             new_self.tx = Some(tx);
             let validation_timeout = new_self.validation_timeout;
@@ -109,11 +128,12 @@ impl UpdateValidation {
                 }
             }));
         }
+        new_self.report().await;
         Ok(new_self)
     }
 
     pub async fn set_authenticated(&mut self, authenticated: bool) -> Result<()> {
-        if self.run_update_validation {
+        if matches!(self.status, UpdateValidationStatus::ValidatingTrial(_)) {
             self.authenticated = authenticated;
             debug!(
                 "authenticated: {}, local update: {}",
@@ -185,6 +205,10 @@ impl UpdateValidation {
             );
         }
 
+        self.status = UpdateValidationStatus::Succeeded;
+
+        self.report().await;
+
         Ok(())
     }
 
@@ -206,5 +230,13 @@ impl UpdateValidation {
         }
 
         Ok(())
+    }
+
+    pub async fn report(&self) {
+        web_service::publish(
+            web_service::PublishChannel::UpdateValidationStatus,
+            json!({"status": self.status}),
+        )
+        .await;
     }
 }

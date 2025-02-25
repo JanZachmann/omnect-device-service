@@ -42,6 +42,7 @@ pub enum PublishChannel {
     OnlineStatus,
     SystemInfo,
     Timeouts,
+    UpdateValidationStatus,
 }
 
 #[derive(Deserialize, Debug)]

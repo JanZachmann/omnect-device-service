@@ -36,6 +36,7 @@ pub enum Command {
     ReloadNetwork,
     RunFirmwareUpdate(firmware_update::RunUpdateCommand),
     SetWaitOnlineTimeout(reboot::SetWaitOnlineTimeoutCommand),
+    ValidateUpdateAuthenticated(bool),
     UserConsent(consent::UserConsentCommand),
 }
 
@@ -58,6 +59,7 @@ impl Command {
             ReloadNetwork => TypeId::of::<network::Network>(),
             RunFirmwareUpdate(_) => TypeId::of::<firmware_update::FirmwareUpdate>(),
             SetWaitOnlineTimeout(_) => TypeId::of::<reboot::Reboot>(),
+            ValidateUpdateAuthenticated(_) => TypeId::of::<firmware_update::FirmwareUpdate>(),
             UserConsent(_) => TypeId::of::<consent::DeviceUpdateConsent>(),
         }
     }
@@ -160,8 +162,8 @@ pub struct CommandRequest {
 }
 
 pub type CommandResult = Result<Option<serde_json::Value>>;
-pub type EventStream = Pin<Box<dyn Stream<Item = Vec<CommandRequest>> + Send>>;
-pub type EventStreamResult = Result<Option<EventStream>>;
+pub type CommandRequestStream = Pin<Box<dyn Stream<Item = Vec<CommandRequest>> + Send>>;
+pub type CommandRequestStreamResult = Result<Option<CommandRequestStream>>;
 
 #[async_trait(?Send)]
 pub(crate) trait Feature {
@@ -181,7 +183,7 @@ pub(crate) trait Feature {
         Ok(())
     }
 
-    fn event_stream(&mut self) -> EventStreamResult {
+    fn command_request_stream(&mut self) -> CommandRequestStreamResult {
         Ok(None)
     }
 
@@ -202,7 +204,7 @@ pub struct IntervalCommand {
     pub instant: Instant,
 }
 
-pub fn interval_stream<T>(interval: Interval) -> EventStream
+pub fn interval_stream<T>(interval: Interval) -> CommandRequestStream
 where
     T: 'static,
 {
@@ -219,7 +221,7 @@ where
         .boxed()
 }
 
-pub fn file_created_stream<T>(paths: Vec<&Path>) -> EventStream
+pub fn file_created_stream<T>(paths: Vec<&Path>) -> CommandRequestStream
 where
     T: 'static,
 {
@@ -247,7 +249,7 @@ where
 
 pub fn file_modified_stream<T>(
     paths: Vec<&Path>,
-) -> Result<(Debouncer<INotifyWatcher, NoCache>, EventStream)>
+) -> Result<(Debouncer<INotifyWatcher, NoCache>, CommandRequestStream)>
 where
     T: 'static,
 {

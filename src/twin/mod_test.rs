@@ -711,7 +711,7 @@ pub mod mod_test {
                 .features
                 .get_mut(&TypeId::of::<consent::DeviceUpdateConsent>())
                 .unwrap()
-                .event_stream()
+                .command_request_stream()
                 .unwrap()
                 .unwrap();
 
@@ -774,7 +774,7 @@ pub mod mod_test {
             assert!(block_on(async {
                 test_attr
                     .twin
-                    .handle_command(
+                    .handle_requests(
                         feature::Command::from_direct_method(&DirectMethod {
                             name: "user_consent".to_string(),
                             payload: json!({"test_component": "1.0.0"}),

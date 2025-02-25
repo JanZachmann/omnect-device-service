@@ -367,7 +367,7 @@ impl Feature for ModemInfo {
         self.report(true).await
     }
 
-    fn event_stream(&mut self) -> EventStreamResult {
+    fn command_request_stream(&mut self) -> CommandRequestStreamResult {
         if !self.is_enabled() || 0 == *REFRESH_MODEM_INFO_INTERVAL_SECS {
             Ok(None)
         } else {
