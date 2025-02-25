@@ -359,6 +359,15 @@ impl FirmwareUpdate {
 
     #[cfg(not(feature = "mock"))]
     fn swupdate(swu_file_path: &str, selection: &str) -> Result<()> {
+        let stdio = std::process::Stdio::from(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(log_file_path!())
+                .context(format!("failed to open for write log file"))?,
+        );
+
         ensure!(
             std::process::Command::new("sudo")
                 .arg("-u")
@@ -371,9 +380,8 @@ impl FirmwareUpdate {
                 .arg(pubkey_file_path!())
                 .arg("-e")
                 .arg(selection)
-                /* ToDo                .arg("&>>")
-                .arg(log_file_path!()) */
                 .current_dir("/usr/bin")
+                .stdout(stdio)
                 .status()?
                 .success(),
             "failed to run swupdate command"

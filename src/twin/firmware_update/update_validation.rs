@@ -159,7 +159,7 @@ impl UpdateValidation {
         systemd::wait_for_system_running(timeout).await?;
 
         /* ToDo: if it returns with an error, we may want to handle the state
-         * "degrated" and possibly ignore certain failed services via configuration
+         * "degraded" and possibly ignore certain failed services via configuration
          */
         info!("system is running");
 
