@@ -32,7 +32,7 @@ pub async fn unit_action(unit: &str, unit_action: UnitAction, timeout: Duration)
             UnitAction::Reload => manager.reload_unit(unit, Mode::Fail).await,
             UnitAction::Restart => manager.restart_unit(unit, Mode::Fail).await,
             UnitAction::Start => manager.start_unit(unit, Mode::Fail).await,
-            UnitAction::Stop => manager.stop_unit(unit, Mode::Fail).await,
+            UnitAction::Stop => manager.stop_unit(unit, Mode::Replace).await, // ToDo
         }
     };
 
