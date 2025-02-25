@@ -1,12 +1,13 @@
 use anyhow::Result;
 use std::time::Duration;
+pub use systemd_zbus::Mode;
 
 cfg_if::cfg_if! {
     if #[cfg(not(any(feature = "mock", test)))] {
         use anyhow::{ensure, Context};
         use futures_util::{join, StreamExt};
         use log::debug;
-        use systemd_zbus::{ManagerProxy, Mode};
+        use systemd_zbus::ManagerProxy;
         use tokio::time::{timeout_at, Instant};
     }
 }
@@ -20,7 +21,12 @@ pub enum UnitAction {
 }
 
 #[cfg(not(feature = "mock"))]
-pub async fn unit_action(unit: &str, unit_action: UnitAction, timeout: Duration) -> Result<()> {
+pub async fn unit_action(
+    unit: &str,
+    unit_action: UnitAction,
+    timeout: Duration,
+    mode: Mode,
+) -> Result<()> {
     let deadline = Instant::now() + timeout;
     let system = timeout_at(deadline, zbus::Connection::system()).await??;
     let manager = timeout_at(deadline, ManagerProxy::new(&system)).await??;
@@ -29,10 +35,10 @@ pub async fn unit_action(unit: &str, unit_action: UnitAction, timeout: Duration)
 
     let action = |&unit_action| async move {
         match unit_action {
-            UnitAction::Reload => manager.reload_unit(unit, Mode::Fail).await,
-            UnitAction::Restart => manager.restart_unit(unit, Mode::Fail).await,
-            UnitAction::Start => manager.start_unit(unit, Mode::Fail).await,
-            UnitAction::Stop => manager.stop_unit(unit, Mode::Replace).await, // ToDo
+            UnitAction::Reload => manager.reload_unit(unit, mode).await,
+            UnitAction::Restart => manager.restart_unit(unit, mode).await,
+            UnitAction::Start => manager.start_unit(unit, mode).await,
+            UnitAction::Stop => manager.stop_unit(unit, mode).await,
         }
     };
 
@@ -80,6 +86,11 @@ pub async fn unit_action(unit: &str, unit_action: UnitAction, timeout: Duration)
 }
 
 #[cfg(feature = "mock")]
-pub async fn unit_action(_unit: &str, _unit_action: UnitAction, _timeout: Duration) -> Result<()> {
+pub async fn unit_action(
+    _unit: &str,
+    _unit_action: UnitAction,
+    _timeout: Duration,
+    _mode: Mode,
+) -> Result<()> {
     Ok(())
 }

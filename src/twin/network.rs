@@ -96,6 +96,7 @@ impl Feature for Network {
                     NETWORK_SERVICE,
                     unit::UnitAction::Reload,
                     Duration::from_secs(NETWORK_SERVICE_RELOAD_TIMEOUT_IN_SECS),
+                    systemd_zbus::Mode::Fail,
                 )
                 .await?
             }

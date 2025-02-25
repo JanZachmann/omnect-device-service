@@ -28,12 +28,12 @@ use update_validation::UpdateValidation;
 
 static UPDATE_WDT_INTERVAL_SECS: u64 = 600;
 
-struct RunGuard {
+struct RunUpdateGuard {
     succeeded: bool,
     wdt: Option<Duration>,
 }
 
-impl RunGuard {
+impl RunUpdateGuard {
     async fn new() -> Result<Self> {
         let succeeded = false;
         let wdt = WatchdogManager::interval(Duration::from_secs(UPDATE_WDT_INTERVAL_SECS)).await?;
@@ -41,15 +41,24 @@ impl RunGuard {
         debug!("changed wdt to {UPDATE_WDT_INTERVAL_SECS}s and saved old one ({wdt:?})");
 
         systemd::unit::unit_action(
+            IOT_HUB_DEVICE_UPDATE_SERVICE_TIMER,
+            UnitAction::Stop,
+            Duration::from_secs(30),
+            systemd_zbus::Mode::Replace,
+        )
+        .await?;
+
+        systemd::unit::unit_action(
             IOT_HUB_DEVICE_UPDATE_SERVICE,
             UnitAction::Stop,
             Duration::from_secs(30),
+            systemd_zbus::Mode::Replace,
         )
         .await?;
 
         debug!("stopped {IOT_HUB_DEVICE_UPDATE_SERVICE}");
 
-        Ok(RunGuard { succeeded, wdt })
+        Ok(RunUpdateGuard { succeeded, wdt })
     }
 
     fn finalize(&mut self) {
@@ -57,12 +66,12 @@ impl RunGuard {
     }
 }
 
-impl Drop for RunGuard {
+impl Drop for RunUpdateGuard {
     fn drop(&mut self) {
         if !(self.succeeded) {
             let wdt = self.wdt.take();
 
-            debug!("update failed: restore old wdt ({wdt:?}) and restart {IOT_HUB_DEVICE_UPDATE_SERVICE}");
+            debug!("update failed: restore old wdt ({wdt:?}) and restart {IOT_HUB_DEVICE_UPDATE_SERVICE} and {IOT_HUB_DEVICE_UPDATE_SERVICE_TIMER}");
 
             tokio::spawn(async move {
                 if let Some(wdt) = wdt {
@@ -75,10 +84,22 @@ impl Drop for RunGuard {
                     IOT_HUB_DEVICE_UPDATE_SERVICE,
                     UnitAction::Start,
                     Duration::from_secs(30),
+                    systemd_zbus::Mode::Fail,
                 )
                 .await
                 {
                     error!("failed to restart {IOT_HUB_DEVICE_UPDATE_SERVICE}: {e:#}")
+                }
+
+                if let Err(e) = systemd::unit::unit_action(
+                    IOT_HUB_DEVICE_UPDATE_SERVICE_TIMER,
+                    UnitAction::Start,
+                    Duration::from_secs(30),
+                    systemd_zbus::Mode::Fail,
+                )
+                .await
+                {
+                    error!("failed to restart {IOT_HUB_DEVICE_UPDATE_SERVICE_TIMER}: {e:#}")
                 }
             });
         }
@@ -299,7 +320,7 @@ impl FirmwareUpdate {
 
         let target_partition = RootPartition::current()?.other();
 
-        let mut guard = RunGuard::new().await?;
+        let mut guard = RunUpdateGuard::new().await?;
 
         Self::swupdate(swu_file_path, target_partition.root_update_params()).context(format!(
             "failed to update root partition: swupdate logs at {}",

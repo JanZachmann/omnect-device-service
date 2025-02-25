@@ -4,7 +4,7 @@ use crate::{
     twin::{firmware_update::common::*, system_info::RootPartition, web_service},
 };
 use anyhow::{bail, Context, Result};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::{serde_as, DurationMilliSeconds};
@@ -164,7 +164,7 @@ impl UpdateValidation {
         info!("system is running");
 
         // remove iot-hub-device-service barrier file and start service as part of validation
-        debug!("starting deviceupdate-agent.service");
+        debug!("starting {IOT_HUB_DEVICE_UPDATE_SERVICE}");
         fs::remove_file(UPDATE_VALIDATION_FILE).context("remove UPDATE_VALIDATION_FILE")?;
 
         let now = Duration::from(nix::time::clock_gettime(
@@ -172,9 +172,21 @@ impl UpdateValidation {
         )?);
         let timeout = self.validation_timeout - (now - self.start_monotonic_time);
 
-        systemd::unit::unit_action(IOT_HUB_DEVICE_UPDATE_SERVICE, UnitAction::Start, timeout)
-            .await?;
-        debug!("successfully started iot-hub-device-update");
+        if let Err(e) = systemd::unit::unit_action(
+            IOT_HUB_DEVICE_UPDATE_SERVICE,
+            UnitAction::Start,
+            timeout,
+            systemd_zbus::Mode::Fail,
+        )
+        .await
+        {
+            if self.local_update {
+                warn!("couldn't start {IOT_HUB_DEVICE_UPDATE_SERVICE} as part of local update. reason might be a missing iothub connection.")
+            } else {
+                bail!("failed to start  {IOT_HUB_DEVICE_UPDATE_SERVICE}: {e}")
+            }
+        }
+        debug!("successfully started {IOT_HUB_DEVICE_UPDATE_SERVICE}");
 
         info!("successfully validated update");
         Ok(())

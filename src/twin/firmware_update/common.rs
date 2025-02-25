@@ -7,6 +7,7 @@ pub struct UpdateValidationConfig {
 }
 
 pub static IOT_HUB_DEVICE_UPDATE_SERVICE: &str = "deviceupdate-agent.service";
+pub static IOT_HUB_DEVICE_UPDATE_SERVICE_TIMER: &str = "deviceupdate-agent.timer";
 
 macro_rules! update_validation_config_path {
     () => {{
