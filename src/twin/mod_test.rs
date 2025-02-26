@@ -80,7 +80,7 @@ pub mod mod_test {
         }
 
         #[allow(dead_code)]
-        pub async fn shutdown(&mut self) {}
+        pub async fn shutdown(&mut self, _timeout: Duration) {}
     }
 
     pub struct TestEnvironment {

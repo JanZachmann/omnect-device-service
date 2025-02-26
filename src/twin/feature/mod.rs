@@ -166,7 +166,7 @@ pub type CommandRequestStream = Pin<Box<dyn Stream<Item = Vec<CommandRequest>> +
 pub type CommandRequestStreamResult = Result<Option<CommandRequestStream>>;
 
 #[async_trait(?Send)]
-pub(crate) trait Feature {
+pub trait Feature {
     fn name(&self) -> String;
     fn version(&self) -> u8;
     fn is_enabled(&self) -> bool;

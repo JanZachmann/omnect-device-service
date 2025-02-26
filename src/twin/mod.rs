@@ -33,7 +33,7 @@ use log::{error, info, warn};
 use serde_json::json;
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook_tokio::Signals;
-use std::{any::TypeId, collections::HashMap, path::Path, time};
+use std::{any::TypeId, collections::HashMap, path::Path, time::{self, Duration}};
 use tokio::{
     select,
     sync::{mpsc, oneshot},
@@ -306,7 +306,7 @@ impl Twin {
                     .unwrap_or_else(|e| error!("couldn't send while shutting down: {e:#}"));
             }
 
-            client.shutdown().await;
+            client.shutdown(Duration::from_secs(5)).await;
             self.client = None;
         }
 
@@ -318,7 +318,7 @@ impl Twin {
     async fn reset_client_with_delay(&mut self, timeout: Option<time::Duration>) {
         if let Some(client) = self.client.as_mut() {
             info!("reset_client: shutdown iotclient");
-            client.shutdown().await;
+            client.shutdown(Duration::from_secs(5)).await;
             self.client = None;
         }
 

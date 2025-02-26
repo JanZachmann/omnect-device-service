@@ -837,12 +837,14 @@ curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/
 ```
 
 ### Local firmware update
-ToDo !
-Description [Factory reset](#factory-reset).
+
+#### Load a firmware package
 
 ```
 curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/fwupdate/load/v1 --json '{"update_file_path": "/path/to/update.tar"}'
 ```
+
+#### Run installation of a loaded firmware package
 
 ```
 curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/fwupdate/run/v1 --json '{"validate_iothub_connection": bool}'
