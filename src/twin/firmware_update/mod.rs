@@ -437,16 +437,24 @@ mod tests {
 
     #[test]
     fn load_ok() {
-        let mut firmware_update = FirmwareUpdate::default();
         let tmp_dir = tempfile::tempdir().unwrap();
         let update_folder = tmp_dir.path().join("local_update");
         let du_config_file = tmp_dir.path().join("du-config.json");
         let sw_versions_file = tmp_dir.path().join("sw-versions");
         std::fs::copy("testfiles/positive/du-config.json", &du_config_file).unwrap();
         std::fs::copy("testfiles/positive/sw-versions", &sw_versions_file).unwrap();
+        std::fs::create_dir_all(&update_folder).unwrap();
         std::env::set_var("UPDATE_FOLDER_PATH", update_folder);
         std::env::set_var("DEVICE_UPDATE_PATH", du_config_file);
         std::env::set_var("SW_VERSIONS_PATH", sw_versions_file);
+        let (tx_validated, mut _rx_validated) = tokio::sync::oneshot::channel();
+        let update_validation =
+            block_on(async { UpdateValidation::new(tx_validated).await.unwrap() });
+
+        let mut firmware_update = FirmwareUpdate {
+            swu_file_path: None,
+            update_validation,
+        };
 
         assert!(block_on(async { firmware_update.load("testfiles/positive/update.tar") }).is_ok());
     }

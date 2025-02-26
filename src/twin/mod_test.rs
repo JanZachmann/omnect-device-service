@@ -231,11 +231,13 @@ pub mod mod_test {
             let (tx_reported_properties, mut rx_reported_properties) = mpsc::channel(100);
             let (tx_outgoing_message, _rx_outgoing_message) = mpsc::channel(100);
             let (tx_web_service, _rx_web_service) = mpsc::channel(100);
+            let (tx_validated, mut _rx_validated) = tokio::sync::oneshot::channel();
 
             let mut twin = block_on(Twin::new(
                 tx_web_service,
                 tx_reported_properties,
                 tx_outgoing_message,
+                tx_validated,
             ))
             .unwrap();
 
@@ -740,7 +742,7 @@ pub mod mod_test {
                     .features
                     .get_mut(&TypeId::of::<consent::DeviceUpdateConsent>())
                     .unwrap()
-                    .command(cmd)
+                    .command(&cmd.first().unwrap().command)
                     .await
             })
             .is_ok());
@@ -774,15 +776,15 @@ pub mod mod_test {
             assert!(block_on(async {
                 test_attr
                     .twin
-                    .handle_requests(
-                        feature::Command::from_direct_method(&DirectMethod {
+                    .handle_requests(vec![CommandRequest {
+                        command: feature::Command::from_direct_method(&DirectMethod {
                             name: "user_consent".to_string(),
                             payload: json!({"test_component": "1.0.0"}),
                             responder: tx,
                         })
                         .unwrap(),
-                        None,
-                    )
+                        reply: None,
+                    }])
                     .await
             })
             .is_ok());

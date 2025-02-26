@@ -76,7 +76,7 @@ futures-executor = "0.3"
 mockall = "0.13"
 rand = "0.8"
 regex = "1"
-omnect-device-service = { path = ".", features = ["bootloader_grub"] }
+omnect-device-service = { path = ".", features = ["mock"] }
 tempfile = "3.14"
 
 [features]

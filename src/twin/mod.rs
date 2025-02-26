@@ -342,7 +342,7 @@ impl Twin {
     }
 
     async fn request_validate_update(&mut self, authenticated: bool) -> Result<()> {
-        if !self.update_validated && self.state == TwinState::Uninitialized {
+        if !self.update_validated {
             self.tx_command_request
                 .send(vec![CommandRequest {
                     command: Command::ValidateUpdateAuthenticated(authenticated),

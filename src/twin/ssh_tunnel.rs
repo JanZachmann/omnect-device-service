@@ -761,7 +761,7 @@ mod tests {
 
         let _response = block_on(async {
             ssh_tunnel
-                .command(FeatureCommand::DesiredUpdateDeviceSshCa(
+                .command(&FeatureCommand::DesiredUpdateDeviceSshCa(
                     UpdateDeviceSshCaCommand {
                         ssh_tunnel_ca_pub: CERTIFICATE_DATA.to_string(),
                     },
@@ -807,7 +807,7 @@ mod tests {
 
         let response = block_on(async {
             ssh_tunnel
-                .command(FeatureCommand::GetSshPubKey(GetSshPubKeyCommand {
+                .command(&FeatureCommand::GetSshPubKey(GetSshPubKeyCommand {
                     tunnel_id,
                 }))
                 .await
@@ -828,7 +828,7 @@ mod tests {
 
         let response = block_on(async {
             ssh_tunnel
-                .command(FeatureCommand::GetSshPubKey(GetSshPubKeyCommand {
+                .command(&FeatureCommand::GetSshPubKey(GetSshPubKeyCommand {
                     tunnel_id,
                 }))
                 .await
@@ -861,7 +861,7 @@ mod tests {
         // test successful
         assert!(block_on(async {
             ssh_tunnel
-                .command(FeatureCommand::OpenSshTunnel(OpenSshTunnelCommand {
+                .command(&FeatureCommand::OpenSshTunnel(OpenSshTunnelCommand {
                     tunnel_id: "b7afb216-5f7a-4755-a300-9374f8a0e9ff".to_string(),
                     certificate: std::fs::read_to_string(cert_path.clone()).unwrap(),
                     bastion_config: BastionConfig {
@@ -894,7 +894,7 @@ mod tests {
         for pipe_name in &pipe_names[0..=4] {
             assert!(block_on(async {
                 ssh_tunnel
-                    .command(FeatureCommand::OpenSshTunnel(OpenSshTunnelCommand {
+                    .command(&FeatureCommand::OpenSshTunnel(OpenSshTunnelCommand {
                         tunnel_id: "b7afb216-5f7a-4755-a300-9374f8a0e9ff".to_string(),
                         certificate: std::fs::read_to_string(cert_path.clone()).unwrap(),
                         bastion_config: BastionConfig {
@@ -912,7 +912,7 @@ mod tests {
         // the final should fail
         assert!(block_on(async {
             ssh_tunnel
-                .command(FeatureCommand::OpenSshTunnel(OpenSshTunnelCommand {
+                .command(&FeatureCommand::OpenSshTunnel(OpenSshTunnelCommand {
                     tunnel_id: "b7afb216-5f7a-4755-a300-9374f8a0e9ff".to_string(),
                     certificate: std::fs::read_to_string(cert_path.clone()).unwrap(),
                     bastion_config: BastionConfig {

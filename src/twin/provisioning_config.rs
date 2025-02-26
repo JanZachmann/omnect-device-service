@@ -337,7 +337,7 @@ mod tests {
         env::set_var("EST_CERT_FILE_PATH", "testfiles/positive/deviceid2-*.cer");
 
         config
-            .command(Command::Interval(IntervalCommand {
+            .command(&Command::Interval(IntervalCommand {
                 feature_id: TypeId::of::<ProvisioningConfig>(),
                 instant: Instant::now(),
             }))

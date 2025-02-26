@@ -278,7 +278,7 @@ mod tests {
 
         assert!(block_on(async {
             factory_reset
-                .command(Command::FactoryReset(FactoryResetCommand {
+                .command(&Command::FactoryReset(FactoryResetCommand {
                     mode: FactoryResetMode::Mode1,
                     preserve: vec!["foo".to_string()],
                 }))
@@ -292,7 +292,7 @@ mod tests {
 
         assert!(block_on(async {
             factory_reset
-                .command(Command::FactoryReset(FactoryResetCommand {
+                .command(&Command::FactoryReset(FactoryResetCommand {
                     mode: FactoryResetMode::Mode1,
                     preserve: vec![
                         "network".to_string(),

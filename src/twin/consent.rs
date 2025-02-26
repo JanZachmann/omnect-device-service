@@ -268,7 +268,7 @@ mod tests {
 
         assert!(block_on(async {
             consent
-                .command(Command::FileModified(FileCommand {
+                .command(&Command::FileModified(FileCommand {
                     feature_id: TypeId::of::<DeviceUpdateConsent>(),
                     path: PathBuf::from_str("my-path").unwrap(),
                 }))
@@ -282,7 +282,7 @@ mod tests {
 
         assert!(block_on(async {
             consent
-                .command(Command::FileModified(FileCommand {
+                .command(&Command::FileModified(FileCommand {
                     feature_id: TypeId::of::<DeviceUpdateConsent>(),
                     path: PathBuf::from_str("testfiles/positive/test_component/user_consent.json")
                         .unwrap(),
@@ -307,7 +307,7 @@ mod tests {
 
         assert!(block_on(async {
             consent
-                .command(Command::DesiredGeneralConsent(
+                .command(&Command::DesiredGeneralConsent(
                     DesiredGeneralConsentCommand {
                         general_consent: vec![],
                     },
@@ -328,7 +328,7 @@ mod tests {
 
         assert!(block_on(async {
             consent
-                .command(Command::DesiredGeneralConsent(
+                .command(&Command::DesiredGeneralConsent(
                     DesiredGeneralConsentCommand {
                         general_consent: vec![],
                     },
@@ -345,7 +345,7 @@ mod tests {
 
         assert!(block_on(async {
             consent
-                .command(Command::DesiredGeneralConsent(
+                .command(&Command::DesiredGeneralConsent(
                     DesiredGeneralConsentCommand {
                         general_consent: vec![],
                     },
@@ -382,7 +382,7 @@ mod tests {
 
         assert!(block_on(async {
             consent
-                .command(Command::DesiredGeneralConsent(
+                .command(&Command::DesiredGeneralConsent(
                     DesiredGeneralConsentCommand {
                         general_consent: vec!["foo".to_string(), "bar".to_string()],
                     },
@@ -411,7 +411,7 @@ mod tests {
 
         assert!(block_on(async {
             consent
-                .command(Command::UserConsent(UserConsentCommand {
+                .command(&Command::UserConsent(UserConsentCommand {
                     user_consent: HashMap::from([("foo/bar".to_string(), "bar".to_string())]),
                 }))
                 .await
@@ -424,7 +424,7 @@ mod tests {
 
         assert!(block_on(async {
             consent
-                .command(Command::UserConsent(UserConsentCommand {
+                .command(&Command::UserConsent(UserConsentCommand {
                     user_consent: HashMap::from([("foo".to_string(), "bar".to_string())]),
                 }))
                 .await
@@ -445,7 +445,7 @@ mod tests {
 
         assert!(block_on(async {
             consent
-                .command(Command::UserConsent(UserConsentCommand {
+                .command(&Command::UserConsent(UserConsentCommand {
                     user_consent: HashMap::from([("foo".to_string(), "bar".to_string())]),
                 }))
                 .await

@@ -385,7 +385,7 @@ mod tests {
     #[actix_web::test]
     async fn reboot_ok() {
         let (tx_web_service, mut rx_web_service) =
-            tokio::sync::mpsc::channel::<CommandRequest>(100);
+            tokio::sync::mpsc::channel::<Vec<CommandRequest>>(100);
 
         let app = test::init_service(
             App::new()
@@ -395,8 +395,8 @@ mod tests {
         .await;
 
         tokio::spawn(async move {
-            let req = rx_web_service.recv().await.unwrap();
-            req.reply.unwrap().send(Ok(None)).unwrap();
+            let mut req = rx_web_service.recv().await.unwrap();
+            req.swap_remove(0).reply.unwrap().send(Ok(None)).unwrap();
         });
 
         let req = test::TestRequest::post().uri("/reboot/v1").to_request();
@@ -407,7 +407,7 @@ mod tests {
     #[actix_web::test]
     async fn reboot_fail() {
         let (tx_web_service, mut rx_web_service) =
-            tokio::sync::mpsc::channel::<CommandRequest>(100);
+            tokio::sync::mpsc::channel::<Vec<CommandRequest>>(100);
 
         let app = test::init_service(
             App::new()
@@ -417,8 +417,9 @@ mod tests {
         .await;
 
         tokio::spawn(async move {
-            let req = rx_web_service.recv().await.unwrap();
-            req.reply
+            let mut req = rx_web_service.recv().await.unwrap();
+            req.swap_remove(0)
+                .reply
                 .unwrap()
                 .send(Err(anyhow::anyhow!("error")))
                 .unwrap();
