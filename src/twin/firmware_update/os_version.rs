@@ -69,7 +69,7 @@ impl OmnectOsVersion {
         let regex = Regex::new(r#"^(\d*).(\d*).(\d*).(\d*)$"#).context("failed to create regex")?;
 
         let c = regex
-            .captures(version)
+            .captures(version.trim())
             .context("failed to create captures")?;
 
         Ok(OmnectOsVersion {
@@ -84,12 +84,11 @@ impl OmnectOsVersion {
         let sw_versions =
             fs::read_to_string(sw_versions_path!()).context("failed to read sw-versions file")?;
 
-        // ToDo: re-check: r"^.* (\d*).(\d*).(\d*).(\d*)$"
-        // dos2unix
-        let regex = Regex::new(r".* (\d*).(\d*).(\d*).(\d*)").context("failed to create regex")?;
+        let regex =
+            Regex::new(r"^.* (\d*).(\d*).(\d*).(\d*)$").context("failed to create regex")?;
 
         let c = regex
-            .captures(&sw_versions)
+            .captures(sw_versions.trim())
             .context(format!("no captures found in: {sw_versions}"))?;
 
         Ok(OmnectOsVersion {
