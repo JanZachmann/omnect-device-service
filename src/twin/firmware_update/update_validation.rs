@@ -4,7 +4,7 @@ use crate::{
     twin::{firmware_update::common::*, system_info::RootPartition, web_service},
 };
 use anyhow::{bail, Context, Result};
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::{serde_as, DurationMilliSeconds};
@@ -45,7 +45,9 @@ pub struct UpdateValidation {
     #[serde(skip)]
     validation_timeout: Duration,
     #[serde(skip)]
-    tx: Option<oneshot::Sender<()>>,
+    tx_validated: Option<oneshot::Sender<()>>,
+    #[serde(skip)]
+    tx_cancel_timer: Option<oneshot::Sender<()>>,
     #[serde(skip)]
     join_handle: Option<JoinHandle<()>>,
     #[serde(skip)]
@@ -53,7 +55,7 @@ pub struct UpdateValidation {
 }
 
 impl UpdateValidation {
-    pub async fn new() -> Result<Self> {
+    pub async fn new(tx_validated: oneshot::Sender<()>) -> Result<Self> {
         let mut new_self = UpdateValidation::default();
         let validation_timeout = Duration::from_secs(UPDATE_VALIDATION_TIMEOUT_IN_SECS);
         if let Ok(timeout_secs) = env::var("UPDATE_VALIDATION_TIMEOUT_IN_SECS") {
@@ -96,14 +98,24 @@ impl UpdateValidation {
         } else if let Ok(true) = Path::new(UPDATE_VALIDATION_FAILED).try_exists() {
             info!("recovered after update validation failed");
             new_self.status = UpdateValidationStatus::Recovered;
+            if let Err(e) = &tx_validated.send(()) {
+                error!("failed to send validated state: {e:#?}")
+            }
+            new_self.report().await;
+            return Ok(new_self);
         } else {
             info!("no update to be validated");
             new_self.status = UpdateValidationStatus::NoUpdate;
+            if let Err(e) = &tx_validated.send(()) {
+                error!("failed to send validated state: {e:#?}")
+            }
+            new_self.report().await;
+            return Ok(new_self);
         }
 
         if matches!(new_self.status, UpdateValidationStatus::ValidatingTrial(_)) {
-            let (tx, rx) = oneshot::channel();
-            new_self.tx = Some(tx);
+            let (tx_cancel_timer, rx_cancel_timer) = oneshot::channel();
+            new_self.tx_cancel_timer = Some(tx_cancel_timer);
             let validation_timeout = new_self.validation_timeout;
 
             new_self.join_handle = Some(tokio::spawn(async move {
@@ -111,7 +123,7 @@ impl UpdateValidation {
                     "reboot timer started ({} ms).",
                     validation_timeout.as_millis()
                 );
-                match timeout(validation_timeout, rx).await {
+                match timeout(validation_timeout, rx_cancel_timer).await {
                     Err(_) => {
                         error!("update validation: timeout. rebooting ...");
 
@@ -123,6 +135,7 @@ impl UpdateValidation {
                 }
             }));
         }
+        new_self.tx_validated = Some(tx_validated);
         new_self.report().await;
         Ok(new_self)
     }
@@ -167,20 +180,19 @@ impl UpdateValidation {
         )?);
         let timeout = self.validation_timeout - (now - self.start_monotonic_time);
 
-        if let Err(e) = systemd::unit::unit_action(
-            IOT_HUB_DEVICE_UPDATE_SERVICE,
-            UnitAction::Start,
-            timeout,
-            systemd_zbus::Mode::Fail,
-        )
-        .await
-        {
-            if self.local_update {
-                warn!("couldn't start {IOT_HUB_DEVICE_UPDATE_SERVICE} as part of local update. reason might be a missing iothub connection.")
-            } else {
-                bail!("failed to start  {IOT_HUB_DEVICE_UPDATE_SERVICE}: {e}")
-            }
+        // in case of local update we don't take care of starting deviceupdate-agent.service,
+        // since it might fail because of missing iothub connection.
+        // instead we let deviceupdate-agent.timer doing the job periodically
+        if !self.local_update {
+            systemd::unit::unit_action(
+                IOT_HUB_DEVICE_UPDATE_SERVICE,
+                UnitAction::Start,
+                timeout,
+                systemd_zbus::Mode::Fail,
+            )
+            .await?;
         }
+
         debug!("successfully started {IOT_HUB_DEVICE_UPDATE_SERVICE}");
 
         info!("successfully validated update");
@@ -205,14 +217,25 @@ impl UpdateValidation {
         let _ = fs::remove_file(update_validation_config_path!());
 
         // cancel update validation reboot timer
-        if let Err(e) = self.tx.take().unwrap().send(()) {
-            error!(
-                "update validation: could not cancel update validation reboot timer: {:#?}",
-                e
-            );
+        if let Err(e) = self
+            .tx_cancel_timer
+            .take()
+            .context("failed to get tx_cancel_timer")?
+            .send(())
+        {
+            error!("update validation: could not cancel update validation reboot timer: {e:#?}");
         }
 
         self.status = UpdateValidationStatus::Succeeded;
+
+        if let Err(e) = self
+            .tx_validated
+            .take()
+            .context("failed to get tx_validated")?
+            .send(())
+        {
+            error!("failed to send validated state: {e:#?}")
+        }
 
         self.report().await;
 

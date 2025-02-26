@@ -34,7 +34,10 @@ use serde_json::json;
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook_tokio::Signals;
 use std::{any::TypeId, collections::HashMap, path::Path, time};
-use tokio::{select, sync::mpsc};
+use tokio::{
+    select,
+    sync::{mpsc, oneshot},
+};
 use tokio_stream::wrappers::{IntervalStream, ReceiverStream};
 
 #[derive(PartialEq)]
@@ -50,6 +53,7 @@ pub struct Twin {
     tx_command_request: mpsc::Sender<Vec<CommandRequest>>,
     tx_reported_properties: mpsc::Sender<serde_json::Value>,
     tx_outgoing_message: mpsc::Sender<IotMessage>,
+    update_validated: bool,
     state: TwinState,
     features: HashMap<TypeId, Box<dyn Feature>>,
     waiting_for_reboot: bool,
@@ -60,9 +64,11 @@ impl Twin {
         tx_command_request: mpsc::Sender<Vec<CommandRequest>>,
         tx_reported_properties: mpsc::Sender<serde_json::Value>,
         tx_outgoing_message: mpsc::Sender<IotMessage>,
+        tx_validated: oneshot::Sender<()>,
     ) -> Result<Self> {
         // has to be called before iothub client authentication
-        let update_validation = UpdateValidation::new().await?;
+        let update_validation = UpdateValidation::new(tx_validated).await?;
+        let update_validated = false;
         let client = None;
         let web_service = web_service::WebService::run(tx_command_request.clone()).await?;
         let state = TwinState::Uninitialized;
@@ -118,6 +124,7 @@ impl Twin {
             tx_command_request,
             tx_reported_properties,
             tx_outgoing_message,
+            update_validated,
             state,
             features,
             waiting_for_reboot,
@@ -221,11 +228,13 @@ impl Twin {
             }
         }
 
-        self.request_validate_update(auth_status == AuthenticationStatus::Authenticated).await?;
+        let authenticated = auth_status == AuthenticationStatus::Authenticated;
+
+        self.request_validate_update(authenticated).await?;
 
         web_service::publish(
             web_service::PublishChannel::OnlineStatus,
-            json!({"iothub": auth_status == AuthenticationStatus::Authenticated}),
+            json!({"iothub": authenticated}),
         )
         .await;
 
@@ -333,7 +342,7 @@ impl Twin {
     }
 
     async fn request_validate_update(&mut self, authenticated: bool) -> Result<()> {
-        if self.state == TwinState::Uninitialized {
+        if !self.update_validated && self.state == TwinState::Uninitialized {
             self.tx_command_request
                 .send(vec![CommandRequest {
                     command: Command::ValidateUpdateAuthenticated(authenticated),
@@ -353,6 +362,7 @@ impl Twin {
         let (tx_reported_properties, mut rx_reported_properties) = mpsc::channel(100);
         let (tx_outgoing_message, mut rx_outgoing_message) = mpsc::channel(100);
         let (tx_command_request, rx_command_request) = mpsc::channel(100);
+        let (tx_validated, mut rx_validated) = oneshot::channel();
 
         // load env vars from /usr/lib/os-release, e.g. to determine feature availability
         dotenvy::from_path_override(Path::new(&format!(
@@ -364,6 +374,7 @@ impl Twin {
             tx_command_request,
             tx_reported_properties,
             tx_outgoing_message,
+            tx_validated,
         )
         .await?;
 
@@ -422,6 +433,9 @@ impl Twin {
                         twin.reset_client_with_delay(Some(time::Duration::from_secs(1))).await;
                         client_created.set(Self::connect_iothub_client(&client_builder));
                     };
+                },
+                Ok(_) = &mut rx_validated => {
+                    twin.update_validated = true;
                 },
                 requests = command_requests.select_next_some(), if !twin.waiting_for_reboot => {
                     twin.handle_requests(requests).await?
