@@ -24,18 +24,13 @@ static UPDATE_VALIDATION_COMPLETE_BARRIER_FILE: &str =
 static UPDATE_VALIDATION_FAILED: &str = "//run/omnect-device-service/omnect_validate_update_failed";
 static UPDATE_VALIDATION_TIMEOUT_IN_SECS: u64 = 300;
 
-#[derive(Serialize)]
+#[derive(Default, Serialize)]
 enum UpdateValidationStatus {
+    #[default]
     NoUpdate,
     ValidatingTrial(u8),
     Recovered,
     Succeeded,
-}
-
-impl Default for UpdateValidationStatus {
-    fn default() -> Self {
-        UpdateValidationStatus::NoUpdate
-    }
 }
 
 #[serde_as]

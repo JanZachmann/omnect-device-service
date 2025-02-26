@@ -386,7 +386,7 @@ impl FirmwareUpdate {
                 .create(true)
                 .truncate(false)
                 .open(log_file_path!())
-                .context(format!("failed to open for write log file"))?,
+                .context("failed to open for write log file")?,
         );
 
         ensure!(

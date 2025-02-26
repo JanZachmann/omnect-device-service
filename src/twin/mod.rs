@@ -203,9 +203,19 @@ impl Twin {
                 }
             }
             AuthenticationStatus::Unauthenticated(reason) => {
-                if matches!(self.state, TwinState::Authenticated) {
+                if self.state == TwinState::Authenticated {
                     self.state = TwinState::Initialized;
                 }
+
+                if self.state == TwinState::Uninitialized {
+                    self.tx_command_request
+                        .send(vec![CommandRequest {
+                            command: Command::ValidateUpdateAuthenticated(false),
+                            reply: None,
+                        }])
+                        .await
+                        .context("handle_connection_status: requests receiver dropped")?;
+                };
 
                 match reason {
                     UnauthenticatedReason::BadCredential
@@ -227,16 +237,6 @@ impl Twin {
                     | UnauthenticatedReason::NoNetwork
                     | UnauthenticatedReason::Unknown => {
                         info!("Failed to connect to iothub: {reason:?}");
-
-                        if self.state == TwinState::Uninitialized {
-                            self.tx_command_request
-                                .send(vec![CommandRequest {
-                                    command: Command::ValidateUpdateAuthenticated(false),
-                                    reply: None,
-                                }])
-                                .await
-                                .context("handle_connection_status: requests receiver dropped")?;
-                        };
                     }
                     UnauthenticatedReason::DeviceDisabled => {
                         warn!("Failed to connect to iothub: {reason:?}")
