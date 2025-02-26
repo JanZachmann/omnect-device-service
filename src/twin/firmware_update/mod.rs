@@ -40,13 +40,13 @@ impl RunUpdateGuard {
 
         debug!("changed wdt to {UPDATE_WDT_INTERVAL_SECS}s and saved old one ({wdt:?})");
 
-        systemd::unit::unit_action(
+/*         systemd::unit::unit_action(
             IOT_HUB_DEVICE_UPDATE_SERVICE_TIMER,
             UnitAction::Stop,
             Duration::from_secs(30),
             systemd_zbus::Mode::Replace,
         )
-        .await?;
+        .await?; */
 
         systemd::unit::unit_action(
             IOT_HUB_DEVICE_UPDATE_SERVICE,
@@ -91,7 +91,7 @@ impl Drop for RunUpdateGuard {
                     error!("failed to restart {IOT_HUB_DEVICE_UPDATE_SERVICE}: {e:#}")
                 }
 
-                if let Err(e) = systemd::unit::unit_action(
+/*                 if let Err(e) = systemd::unit::unit_action(
                     IOT_HUB_DEVICE_UPDATE_SERVICE_TIMER,
                     UnitAction::Start,
                     Duration::from_secs(30),
@@ -100,7 +100,7 @@ impl Drop for RunUpdateGuard {
                 .await
                 {
                     error!("failed to restart {IOT_HUB_DEVICE_UPDATE_SERVICE_TIMER}: {e:#}")
-                }
+                } */
             });
         }
     }
