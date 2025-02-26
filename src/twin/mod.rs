@@ -434,7 +434,7 @@ impl Twin {
                         client_created.set(Self::connect_iothub_client(&client_builder));
                     };
                 },
-                Ok(_) = &mut rx_validated => {
+                Ok(_) = &mut rx_validated, if !twin.update_validated => {
                     twin.update_validated = true;
                 },
                 requests = command_requests.select_next_some(), if !twin.waiting_for_reboot => {
