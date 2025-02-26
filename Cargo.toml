@@ -18,7 +18,7 @@ async-trait = { version = "0.1", default-features = false }
 #azure-iot-sdk = { git = "https://github.com/omnect/azure-iot-sdk.git", tag = "0.13.9", default-features = false, features = [
 #  "module_client",
 #] }
-azure-iot-sdk = { path = "../azure-iot-sdk", default-features = false, features = [
+azure-iot-sdk = { git = "https://github.com/janzachmann/azure-iot-sdk.git", branch = "chore", default-features = false, features = [
   "module_client",
 ] }
 base64 = "0.13"
