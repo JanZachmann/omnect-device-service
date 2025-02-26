@@ -183,20 +183,6 @@ impl Twin {
                 if self.state != TwinState::Authenticated {
                     info!("Succeeded to connect to iothub");
 
-                    if self.state == TwinState::Uninitialized {
-                        /*
-                         * the update validation test "wait_for_system_running" enforces that
-                         * omnect-device-service already notified its own success
-                         */
-                        self.tx_command_request
-                            .send(vec![CommandRequest {
-                                command: Command::ValidateUpdateAuthenticated(true),
-                                reply: None,
-                            }])
-                            .await
-                            .context("handle_connection_status: requests receiver dropped")?;
-                    };
-
                     self.connect_twin().await?;
 
                     self.state = TwinState::Authenticated;
@@ -206,16 +192,6 @@ impl Twin {
                 if self.state == TwinState::Authenticated {
                     self.state = TwinState::Initialized;
                 }
-
-                if self.state == TwinState::Uninitialized {
-                    self.tx_command_request
-                        .send(vec![CommandRequest {
-                            command: Command::ValidateUpdateAuthenticated(false),
-                            reply: None,
-                        }])
-                        .await
-                        .context("handle_connection_status: requests receiver dropped")?;
-                };
 
                 match reason {
                     UnauthenticatedReason::BadCredential
@@ -244,6 +220,8 @@ impl Twin {
                 }
             }
         }
+
+        self.request_validate_update(auth_status == AuthenticationStatus::Authenticated).await?;
 
         web_service::publish(
             web_service::PublishChannel::OnlineStatus,
@@ -354,6 +332,20 @@ impl Twin {
             .collect()
     }
 
+    async fn request_validate_update(&mut self, authenticated: bool) -> Result<()> {
+        if self.state == TwinState::Uninitialized {
+            self.tx_command_request
+                .send(vec![CommandRequest {
+                    command: Command::ValidateUpdateAuthenticated(authenticated),
+                    reply: None,
+                }])
+                .await
+                .context("handle_connection_status: requests receiver dropped")?;
+        };
+
+        Ok(())
+    }
+
     pub async fn run() -> Result<()> {
         let (tx_connection_status, mut rx_connection_status) = mpsc::channel(100);
         let (tx_twin_desired, rx_twin_desired) = mpsc::channel(100);
@@ -419,6 +411,7 @@ impl Twin {
                         },
                         Err(e) => {
                             error!("couldn't create iothub client: {e:#}");
+                            twin.request_validate_update(false).await?;
                             twin.reset_client_with_delay(Some(time::Duration::from_secs(10))).await;
                             client_created.set(Self::connect_iothub_client(&client_builder));
                         }
