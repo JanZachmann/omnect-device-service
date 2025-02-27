@@ -74,12 +74,12 @@ pub struct ImportManifest {
     pub manifest_version: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct AdditionalDeviceProperties {
     pub compatibilityid: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Agent {
     pub manufacturer: String,
@@ -87,7 +87,7 @@ pub struct Agent {
     pub additional_device_properties: AdditionalDeviceProperties,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct DeviceUpdateConfig {
     pub agents: Vec<Agent>,
 }

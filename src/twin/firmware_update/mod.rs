@@ -458,4 +458,121 @@ mod tests {
 
         assert!(block_on(async { firmware_update.load("testfiles/positive/update.tar") }).is_ok());
     }
+
+    #[test]
+    fn load_sw_versions_fail() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let update_folder = tmp_dir.path().join("local_update");
+        let du_config_file = tmp_dir.path().join("du-config.json");
+        let sw_versions_file = tmp_dir.path().join("sw-versions");
+        std::fs::copy("testfiles/positive/du-config.json", &du_config_file).unwrap();
+        std::fs::create_dir_all(&update_folder).unwrap();
+        std::env::set_var("UPDATE_FOLDER_PATH", update_folder);
+        std::env::set_var("DEVICE_UPDATE_PATH", du_config_file);
+        std::env::set_var("SW_VERSIONS_PATH", &sw_versions_file);
+        let (tx_validated, mut _rx_validated) = tokio::sync::oneshot::channel();
+        let update_validation =
+            block_on(async { UpdateValidation::new(tx_validated).await.unwrap() });
+
+        let mut firmware_update = FirmwareUpdate {
+            swu_file_path: None,
+            update_validation,
+        };
+
+        fs::write(&sw_versions_file, "dobi-OMNECT-gateway-devel 40.0.0.0").unwrap();
+
+        let err =
+            block_on(async { firmware_update.load("testfiles/positive/update.tar") }).unwrap_err();
+
+        assert!(err
+            .chain()
+            .any(|e| e.to_string().starts_with("downgrades not allowed")));
+
+        fs::write(
+            sw_versions_file,
+            "dobi-OMNECT-gateway-devel 4.0.24.557123921",
+        )
+        .unwrap();
+
+        let err =
+            block_on(async { firmware_update.load("testfiles/positive/update.tar") }).unwrap_err();
+
+        assert!(err.chain().any(|e| e
+            .to_string()
+            .starts_with("version 4.0.24.557123921 already installed")));
+    }
+
+    #[test]
+    fn load_compatibility_fail() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let update_folder = tmp_dir.path().join("local_update");
+        let du_config_file = tmp_dir.path().join("du-config.json");
+        let sw_versions_file = tmp_dir.path().join("sw-versions");
+        std::fs::copy("testfiles/positive/sw-versions", &sw_versions_file).unwrap();
+        std::fs::create_dir_all(&update_folder).unwrap();
+        std::env::set_var("UPDATE_FOLDER_PATH", update_folder);
+        std::env::set_var("DEVICE_UPDATE_PATH", &du_config_file);
+        std::env::set_var("SW_VERSIONS_PATH", sw_versions_file);
+        let (tx_validated, mut _rx_validated) = tokio::sync::oneshot::channel();
+        let update_validation =
+            block_on(async { UpdateValidation::new(tx_validated).await.unwrap() });
+
+        let mut firmware_update = FirmwareUpdate {
+            swu_file_path: None,
+            update_validation,
+        };
+
+        let mut du_config = DeviceUpdateConfig {
+            agents: vec![Agent {
+                manufacturer: "".to_string(),
+                model: "".to_string(),
+                additional_device_properties: AdditionalDeviceProperties {
+                    compatibilityid: "".to_string(),
+                },
+            }],
+        };
+
+        fs::write(
+            &du_config_file,
+            serde_json::to_string_pretty(&du_config).unwrap(),
+        )
+        .unwrap();
+
+        let err =
+            block_on(async { firmware_update.load("testfiles/positive/update.tar") }).unwrap_err();
+
+        assert!(err.chain().any(|e| e
+            .to_string()
+            .starts_with("failed to verify compatibility: manufacturer")));
+
+        du_config.agents[0].manufacturer = "conplement-ag".to_string();
+
+        fs::write(
+            &du_config_file,
+            serde_json::to_string_pretty(&du_config).unwrap(),
+        )
+        .unwrap();
+
+        let err =
+            block_on(async { firmware_update.load("testfiles/positive/update.tar") }).unwrap_err();
+
+        assert!(err.chain().any(|e| e
+            .to_string()
+            .starts_with("failed to verify compatibility: model")));
+
+        du_config.agents[0].model = "omnect-raspberrypi4-64-gateway-devel".to_string();
+
+        fs::write(
+            &du_config_file,
+            serde_json::to_string_pretty(&du_config).unwrap(),
+        )
+        .unwrap();
+
+        let err =
+            block_on(async { firmware_update.load("testfiles/positive/update.tar") }).unwrap_err();
+
+        assert!(err.chain().any(|e| e
+            .to_string()
+            .starts_with("failed to verify compatibility: compatibilityid")));
+    }
 }
