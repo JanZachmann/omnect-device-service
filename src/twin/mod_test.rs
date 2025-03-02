@@ -12,8 +12,8 @@ pub mod mod_test {
     use lazy_static::lazy_static;
     use mockall::{automock, predicate::*};
     use rand::{
-        distributions::Alphanumeric,
-        {thread_rng, Rng},
+        distr::Alphanumeric,
+        {rng, Rng},
     };
     use regex::Regex;
     use serde_json::json;
@@ -150,7 +150,7 @@ pub mod mod_test {
             run_test: impl Fn(&mut TestConfig),
         ) {
             // unique testcase name
-            let testcase_name: String = thread_rng()
+            let testcase_name: String = rng()
                 .sample_iter(&Alphanumeric)
                 .take(10)
                 .map(char::from)

@@ -15,6 +15,7 @@ use crate::{
 };
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
+use base64::{prelude::BASE64_STANDARD, Engine};
 use log::{debug, error, info};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -212,10 +213,9 @@ impl FirmwareUpdate {
 
             if path.ends_with(".swu") {
                 file.unpack(&path).context("failed to unpack *.swu")?;
-                swu_sha = base64::encode_config(
-                    Sha256::digest(std::fs::read(&path).context("failed to read *.swu for hash")?),
-                    base64::STANDARD,
-                );
+                swu_sha = BASE64_STANDARD.encode(Sha256::digest(
+                    std::fs::read(&path).context("failed to read *.swu for hash")?,
+                ));
                 swu_path = Some(path);
             } else if path.ends_with(".swu.importManifest.json") {
                 file.unpack(&path)
