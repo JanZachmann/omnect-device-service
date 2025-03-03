@@ -18,7 +18,7 @@ async-trait = { version = "0.1", default-features = false }
 azure-iot-sdk = { git = "https://github.com/omnect/azure-iot-sdk.git", tag = "0.14.0", default-features = false, features = [
   "module_client",
 ] }
-base64 = "0.22"
+base64 = { version = "0.22", default-features = false }
 cfg-if = { version = "1.0", default-features = false }
 dotenvy = { version = "0.15", default-features = false }
 env_logger = { version = "0.11", default-features = false }
