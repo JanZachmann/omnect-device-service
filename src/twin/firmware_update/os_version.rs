@@ -10,6 +10,8 @@ macro_rules! sw_versions_path {
     }};
 }
 
+static OS_VERSION_REGEX: &str = r"(\d+).(\d+).(\d+).(\d+)$";
+
 pub struct OmnectOsVersion {
     major: u32,
     minor: u32,
@@ -66,7 +68,7 @@ impl Display for OmnectOsVersion {
 
 impl OmnectOsVersion {
     pub fn from_string(version: &str) -> Result<OmnectOsVersion> {
-        let regex = Regex::new(r#"^(\d*).(\d*).(\d*).(\d*)$"#).context("failed to create regex")?;
+        let regex = Regex::new(OS_VERSION_REGEX).context("failed to create regex")?;
 
         let c = regex
             .captures(version.trim())
@@ -85,7 +87,7 @@ impl OmnectOsVersion {
             fs::read_to_string(sw_versions_path!()).context("failed to read sw-versions file")?;
 
         let regex =
-            Regex::new(r"^.* (\d*).(\d*).(\d*).(\d*)$").context("failed to create regex")?;
+            Regex::new(OS_VERSION_REGEX).context("failed to create regex")?;
 
         let c = regex
             .captures(sw_versions.trim())
