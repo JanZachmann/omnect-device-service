@@ -69,11 +69,11 @@ impl UpdateValidation {
 
         if let Ok(true) = Path::new(UPDATE_VALIDATION_COMPLETE_BARRIER_FILE).try_exists() {
             // we detected update validation before, but were not validated before
-            new_self = json_from_file(UPDATE_VALIDATION_COMPLETE_BARRIER_FILE)?;
+            new_self = from_json_file(UPDATE_VALIDATION_COMPLETE_BARRIER_FILE)?;
             new_self.restart_count += 1;
             new_self.status = UpdateValidationStatus::ValidatingTrial(new_self.restart_count);
             info!("retry start ({})", new_self.restart_count);
-            json_to_file(&new_self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, false)?;
+            to_json_file(&new_self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, false)?;
             let now = Duration::from(nix::time::clock_gettime(
                 nix::time::ClockId::CLOCK_MONOTONIC,
             )?);
@@ -87,11 +87,11 @@ impl UpdateValidation {
             // check if there is an update validation config
             if let Ok(true) = Path::new(&update_validation_config_path!()).try_exists() {
                 let config: UpdateValidationConfig =
-                    json_from_file(update_validation_config_path!())?;
+                    from_json_file(update_validation_config_path!())?;
                 new_self.local_update = config.local;
             }
 
-            json_to_file(&new_self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, true)?;
+            to_json_file(&new_self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, true)?;
 
             new_self.validation_timeout = validation_timeout;
             new_self.status = UpdateValidationStatus::ValidatingTrial(new_self.restart_count);
@@ -150,7 +150,7 @@ impl UpdateValidation {
 
             // for local updates we accept if there is no connection to iothub
             if self.local_update || self.authenticated {
-                json_to_file(&self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, false)?;
+                to_json_file(&self, UPDATE_VALIDATION_COMPLETE_BARRIER_FILE, false)?;
                 // for now start validation blocking twin::init - maybe we want an successful twin::init as part of validation at some point?
                 return self.check().await;
             }

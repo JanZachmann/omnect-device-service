@@ -74,11 +74,10 @@ pub(crate) use pubkey_file_path;
 pub(crate) use update_folder_path;
 pub(crate) use update_validation_config_path;
 
-pub fn json_to_file<T, P>(value: &T, path: P, create: bool) -> Result<()>
+pub fn to_json_file<T, P>(value: &T, path: P, create: bool) -> Result<()>
 where
     T: ?Sized + Serialize,
-    P: AsRef<std::path::Path>,
-    P: std::fmt::Display,
+    P: AsRef<std::path::Path> + std::fmt::Display,
 {
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
@@ -92,10 +91,9 @@ where
     .context(format!("failed to write to: {path}"))
 }
 
-pub fn json_from_file<P, T>(path: P) -> Result<T>
+pub fn from_json_file<P, T>(path: P) -> Result<T>
 where
-    P: AsRef<std::path::Path>,
-    P: std::fmt::Display,
+    P: AsRef<std::path::Path> + std::fmt::Display,
     T: DeserializeOwned,
 {
     serde_json::from_reader(

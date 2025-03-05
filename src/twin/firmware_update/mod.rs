@@ -181,7 +181,7 @@ impl FirmwareUpdate {
     {
         self.swu_file_path = None;
 
-        let du_config: DeviceUpdateConfig = json_from_file(&du_config_path!())?;
+        let du_config: DeviceUpdateConfig = from_json_file(&du_config_path!())?;
         let current_version = OmnectOsVersion::from_sw_versions_file()?;
         let mut ar = Archive::new(fs::File::open(path).context("failed to open archive")?);
         let mut swu_path = None;
@@ -262,7 +262,7 @@ impl FirmwareUpdate {
         };
 
         // read manifest
-        let manifest: ImportManifest = json_from_file(&manifest_path)?;
+        let manifest: ImportManifest = from_json_file(&manifest_path)?;
 
         // ensure swu hash
         let Some(file) = manifest
@@ -361,7 +361,7 @@ impl FirmwareUpdate {
             )?;
         }
 
-        json_to_file(
+        to_json_file(
             &UpdateValidationConfig {
                 local: !validate_iothub_connection,
             },
