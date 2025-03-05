@@ -21,7 +21,7 @@ static UPDATE_VALIDATION_FILE: &str = "/run/omnect-device-service/omnect_validat
 static UPDATE_VALIDATION_COMPLETE_BARRIER_FILE: &str =
     "/run/omnect-device-service/omnect_validate_update_complete_barrier";
 // this file is used to determine a recovery after a failed update validation
-static UPDATE_VALIDATION_FAILED: &str = "//run/omnect-device-service/omnect_validate_update_failed";
+static UPDATE_VALIDATION_FAILED: &str = "/run/omnect-device-service/omnect_validate_update_failed";
 static UPDATE_VALIDATION_TIMEOUT_IN_SECS: u64 = 300;
 
 #[derive(Default, Serialize)]
