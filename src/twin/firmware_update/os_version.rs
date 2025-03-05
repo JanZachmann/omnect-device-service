@@ -10,7 +10,8 @@ macro_rules! sw_versions_path {
     }};
 }
 
-static OS_VERSION_REGEX: &str = r"(\d+).(\d+).(\d+).(\d+)$";
+static OS_VERSION_REGEX: &str = r"^(\d+).(\d+).(\d+).(\d+)$";
+static SW_VERSION_FILE_REGEX: &str = r"^.* (\d+).(\d+).(\d+).(\d+)$";
 
 pub struct OmnectOsVersion {
     major: u32,
@@ -86,8 +87,7 @@ impl OmnectOsVersion {
         let sw_versions =
             fs::read_to_string(sw_versions_path!()).context("failed to read sw-versions file")?;
 
-        let regex =
-            Regex::new(OS_VERSION_REGEX).context("failed to create regex")?;
+        let regex = Regex::new(SW_VERSION_FILE_REGEX).context("failed to create regex")?;
 
         let c = regex
             .captures(sw_versions.trim())
@@ -132,6 +132,11 @@ mod tests {
             OmnectOsVersion::from_string("2.1.2.3").unwrap()
                 > OmnectOsVersion::from_string("1.1.2.3").unwrap()
         );
+
+        assert!(OmnectOsVersion::from_string("1234..12.12").is_err());
+        assert!(OmnectOsVersion::from_string("12").is_err());
+        assert!(OmnectOsVersion::from_string("123.123.123.123.123").is_err());
+        assert!(OmnectOsVersion::from_string("asdf.123.123.123").is_err());
 
         std::env::set_var("SW_VERSIONS_PATH", "testfiles/positive/sw-versions");
 
