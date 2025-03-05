@@ -28,6 +28,7 @@ use tar::Archive;
 use update_validation::UpdateValidation;
 
 static UPDATE_WDT_INTERVAL_SECS: u64 = 600;
+static UNIT_ACTION_TIMEOUT_SECS: u64 = 30;
 
 struct RunUpdateGuard {
     succeeded: bool,
@@ -44,7 +45,7 @@ impl RunUpdateGuard {
         systemd::unit::unit_action(
             IOT_HUB_DEVICE_UPDATE_SERVICE_TIMER,
             UnitAction::Stop,
-            Duration::from_secs(30),
+            Duration::from_secs(UNIT_ACTION_TIMEOUT_SECS),
             systemd_zbus::Mode::Replace,
         )
         .await?;
@@ -52,7 +53,7 @@ impl RunUpdateGuard {
         systemd::unit::unit_action(
             IOT_HUB_DEVICE_UPDATE_SERVICE,
             UnitAction::Stop,
-            Duration::from_secs(30),
+            Duration::from_secs(UNIT_ACTION_TIMEOUT_SECS),
             systemd_zbus::Mode::Replace,
         )
         .await?;
@@ -84,7 +85,7 @@ impl Drop for RunUpdateGuard {
                 if let Err(e) = systemd::unit::unit_action(
                     IOT_HUB_DEVICE_UPDATE_SERVICE,
                     UnitAction::Start,
-                    Duration::from_secs(30),
+                    Duration::from_secs(UNIT_ACTION_TIMEOUT_SECS),
                     systemd_zbus::Mode::Fail,
                 )
                 .await
@@ -95,7 +96,7 @@ impl Drop for RunUpdateGuard {
                 if let Err(e) = systemd::unit::unit_action(
                     IOT_HUB_DEVICE_UPDATE_SERVICE_TIMER,
                     UnitAction::Start,
-                    Duration::from_secs(30),
+                    Duration::from_secs(UNIT_ACTION_TIMEOUT_SECS),
                     systemd_zbus::Mode::Fail,
                 )
                 .await
