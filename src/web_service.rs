@@ -70,7 +70,7 @@ pub struct WebService {
 }
 
 impl WebService {
-    pub async fn run(tx_request: mpsc::Sender<Vec<CommandRequest>>) -> Result<Option<Self>> {
+    pub async fn run(tx_request: mpsc::Sender<CommandRequest>) -> Result<Option<Self>> {
         // we only start web service feature if WEBSERVICE_ENABLED env var is explicitly set
         if !(*WEBSERVICE_ENABLED) {
             info!("WebService is disabled");
@@ -142,7 +142,7 @@ impl WebService {
 
     async fn factory_reset(
         body: web::Bytes,
-        tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
+        tx_request: web::Data<mpsc::Sender<CommandRequest>>,
     ) -> HttpResponse {
         debug!("WebService factory_reset");
 
@@ -163,7 +163,7 @@ impl WebService {
         }
     }
 
-    async fn reboot(tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>) -> HttpResponse {
+    async fn reboot(tx_request: web::Data<mpsc::Sender<CommandRequest>>) -> HttpResponse {
         debug!("WebService reboot");
 
         let (tx_reply, rx_reply) = oneshot::channel();
@@ -175,9 +175,7 @@ impl WebService {
         Self::exec_request(tx_request, rx_reply, cmd).await
     }
 
-    async fn reload_network(
-        tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
-    ) -> HttpResponse {
+    async fn reload_network(tx_request: web::Data<mpsc::Sender<CommandRequest>>) -> HttpResponse {
         debug!("WebService reload_network");
 
         let (tx_reply, rx_reply) = oneshot::channel();
@@ -189,7 +187,7 @@ impl WebService {
         Self::exec_request(tx_request, rx_reply, cmd).await
     }
 
-    async fn republish(_tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>) -> HttpResponse {
+    async fn republish(_tx_request: web::Data<mpsc::Sender<CommandRequest>>) -> HttpResponse {
         debug!("WebService republish");
 
         for (channel, value) in PUBLISH_CHANNEL_MAP.lock().await.iter() {
@@ -203,7 +201,7 @@ impl WebService {
         HttpResponse::Ok().finish()
     }
 
-    async fn status(_tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>) -> HttpResponse {
+    async fn status(_tx_request: web::Data<mpsc::Sender<CommandRequest>>) -> HttpResponse {
         debug!("WebService status");
 
         let pubs = PUBLISH_CHANNEL_MAP.lock().await;
@@ -215,7 +213,7 @@ impl WebService {
 
     async fn load_fwupdate(
         body: web::Bytes,
-        tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
+        tx_request: web::Data<mpsc::Sender<CommandRequest>>,
     ) -> HttpResponse {
         debug!("WebService load_fwupdate");
 
@@ -238,7 +236,7 @@ impl WebService {
 
     async fn run_fwupdate(
         body: web::Bytes,
-        tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
+        tx_request: web::Data<mpsc::Sender<CommandRequest>>,
     ) -> HttpResponse {
         debug!("WebService run_fwupdate");
 
@@ -260,13 +258,13 @@ impl WebService {
     }
 
     async fn exec_request(
-        tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
+        tx_request: web::Data<mpsc::Sender<CommandRequest>>,
         rx_reply: tokio::sync::oneshot::Receiver<CommandResult>,
         request: CommandRequest,
     ) -> HttpResponse {
         info!("execute request: send {request:?}");
 
-        if tx_request.send(vec![request]).await.is_err() {
+        if tx_request.send(request).await.is_err() {
             error!("execute request: command receiver droped");
             return HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).finish();
         }
@@ -360,7 +358,7 @@ mod tests {
     #[actix_web::test]
     async fn reboot_ok() {
         let (tx_web_service, mut rx_web_service) =
-            tokio::sync::mpsc::channel::<Vec<CommandRequest>>(100);
+            tokio::sync::mpsc::channel::<CommandRequest>(100);
 
         let app = test::init_service(
             App::new()
@@ -370,8 +368,8 @@ mod tests {
         .await;
 
         tokio::spawn(async move {
-            let mut req = rx_web_service.recv().await.unwrap();
-            req.swap_remove(0).reply.unwrap().send(Ok(None)).unwrap();
+            let req = rx_web_service.recv().await.unwrap();
+            req.reply.unwrap().send(Ok(None)).unwrap();
         });
 
         let req = test::TestRequest::post().uri("/reboot/v1").to_request();
@@ -382,7 +380,7 @@ mod tests {
     #[actix_web::test]
     async fn reboot_fail() {
         let (tx_web_service, mut rx_web_service) =
-            tokio::sync::mpsc::channel::<Vec<CommandRequest>>(100);
+            tokio::sync::mpsc::channel::<CommandRequest>(100);
 
         let app = test::init_service(
             App::new()
@@ -392,9 +390,8 @@ mod tests {
         .await;
 
         tokio::spawn(async move {
-            let mut req = rx_web_service.recv().await.unwrap();
-            req.swap_remove(0)
-                .reply
+            let req = rx_web_service.recv().await.unwrap();
+            req.reply
                 .unwrap()
                 .send(Err(anyhow::anyhow!("error")))
                 .unwrap();

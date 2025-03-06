@@ -28,12 +28,18 @@ use azure_iot_sdk::client::*;
 use dotenvy;
 use feature::*;
 use firmware_update::update_validation::UpdateValidation;
+use futures::stream;
 use futures_util::StreamExt;
 use log::{error, info, warn};
 use serde_json::json;
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook_tokio::Signals;
-use std::{any::TypeId, collections::HashMap, path::Path, time::{self, Duration}};
+use std::{
+    any::TypeId,
+    collections::HashMap,
+    path::Path,
+    time::{self, Duration},
+};
 use tokio::{
     select,
     sync::{mpsc, oneshot},
@@ -50,7 +56,7 @@ enum TwinState {
 pub struct Twin {
     client: Option<IotHubClient>,
     web_service: Option<web_service::WebService>,
-    tx_command_request: mpsc::Sender<Vec<CommandRequest>>,
+    tx_command_request: mpsc::Sender<CommandRequest>,
     tx_reported_properties: mpsc::Sender<serde_json::Value>,
     tx_outgoing_message: mpsc::Sender<IotMessage>,
     update_validated: bool,
@@ -61,7 +67,7 @@ pub struct Twin {
 
 impl Twin {
     async fn new(
-        tx_command_request: mpsc::Sender<Vec<CommandRequest>>,
+        tx_command_request: mpsc::Sender<CommandRequest>,
         tx_reported_properties: mpsc::Sender<serde_json::Value>,
         tx_outgoing_message: mpsc::Sender<IotMessage>,
         tx_validated: oneshot::Sender<()>,
@@ -241,44 +247,41 @@ impl Twin {
         Ok(restart_twin)
     }
 
-    async fn handle_requests(&mut self, requests: Vec<CommandRequest>) -> Result<()> {
-        for req in requests {
-            let cmd = req.command;
-            let reply = req.reply;
-            let cmd_string = format!("{cmd:?}");
+    async fn handle_request(&mut self, request: CommandRequest) -> Result<()> {
+        let cmd = request.command;
+        let reply = request.reply;
+        let cmd_string = format!("{cmd:?}");
 
-            let feature = self
-                .features
-                .get_mut(&cmd.feature_id())
-                .context("handle_requests: failed to get feature mutable")?;
+        let feature = self
+            .features
+            .get_mut(&cmd.feature_id())
+            .context("handle_request: failed to get feature mutable")?;
 
-            ensure!(
-                feature.is_enabled(),
-                "handle_requests: feature is disabled {}",
-                feature.name()
-            );
+        ensure!(
+            feature.is_enabled(),
+            "handle_request: feature is disabled {}",
+            feature.name()
+        );
 
-            info!("handle_requests: {}({cmd_string})", feature.name());
+        info!("handle_request: {}({cmd_string})", feature.name());
 
-            let result = feature.command(&cmd).await;
+        let result = feature.command(&cmd).await;
 
-            match &result {
-                Ok(inner_result) => {
-                    info!("handle_requests: {cmd_string} succeeded with result: {inner_result:?}")
-                }
-                Err(e) => error!("handle_requests: {cmd_string} returned error: {e:#}"),
+        match &result {
+            Ok(inner_result) => {
+                info!("handle_request: {cmd_string} succeeded with result: {inner_result:?}")
             }
+            Err(e) => error!("handle_request: {cmd_string} returned error: {e:#}"),
+        }
 
-            if let Some(reply) = reply {
-                if reply.send(result).is_err() {
-                    error!("handle_requests: {cmd_string} receiver dropped");
-                }
+        if let Some(reply) = reply {
+            if reply.send(result).is_err() {
+                error!("handle_request: {cmd_string} receiver dropped");
             }
+        }
 
-            if cmd.eq(&Command::Reboot) {
-                self.waiting_for_reboot = true;
-                break;
-            }
+        if cmd.eq(&Command::Reboot) {
+            self.waiting_for_reboot = true;
         }
 
         Ok(())
@@ -344,10 +347,10 @@ impl Twin {
     async fn request_validate_update(&mut self, authenticated: bool) -> Result<()> {
         if !self.update_validated {
             self.tx_command_request
-                .send(vec![CommandRequest {
+                .send(CommandRequest {
                     command: Command::ValidateUpdateAuthenticated(authenticated),
                     reply: None,
-                }])
+                })
                 .await
                 .context("handle_connection_status: requests receiver dropped")?;
         };
@@ -438,7 +441,7 @@ impl Twin {
                     twin.update_validated = true;
                 },
                 requests = command_requests.select_next_some(), if !twin.waiting_for_reboot => {
-                    twin.handle_requests(requests).await?
+                    twin.handle_request(requests).await?
                 },
                 Some(reported) = rx_reported_properties.recv() => {
                     twin.client
@@ -476,10 +479,10 @@ impl Twin {
         ReceiverStream::new(rx)
             .filter_map(|dm| async move {
                 match Command::from_direct_method(&dm) {
-                    Ok(command) => Some(vec![CommandRequest {
+                    Ok(command) => Some(CommandRequest {
                         command,
                         reply: Some(dm.responder),
-                    }]),
+                    }),
                     Err(e) => {
                         error!(
                             "parsing direct method: {} with payload: {} failed with error: {e:#}",
@@ -505,9 +508,9 @@ impl Twin {
                         reply: None,
                     })
                     .collect();
-
                 c.is_empty().then_some(c)
             })
+            .flat_map(stream::iter)
             .boxed()
     }
 }

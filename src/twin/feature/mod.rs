@@ -162,7 +162,7 @@ pub struct CommandRequest {
 }
 
 pub type CommandResult = Result<Option<serde_json::Value>>;
-pub type CommandRequestStream = Pin<Box<dyn Stream<Item = Vec<CommandRequest>> + Send>>;
+pub type CommandRequestStream = Pin<Box<dyn Stream<Item = CommandRequest> + Send>>;
 pub type CommandRequestStreamResult = Result<Option<CommandRequestStream>>;
 
 #[async_trait(?Send)]
@@ -209,14 +209,12 @@ where
     T: 'static,
 {
     tokio_stream::wrappers::IntervalStream::new(interval)
-        .map(|i| {
-            vec![CommandRequest {
-                command: Command::Interval(IntervalCommand {
-                    feature_id: TypeId::of::<T>(),
-                    instant: i,
-                }),
-                reply: None,
-            }]
+        .map(|i| CommandRequest {
+            command: Command::Interval(IntervalCommand {
+                feature_id: TypeId::of::<T>(),
+                instant: i,
+            }),
+            reply: None,
         })
         .boxed()
 }
@@ -231,13 +229,13 @@ where
     tokio::task::spawn_blocking(move || loop {
         for p in &inner_paths {
             if matches!(p.try_exists(), Ok(true)) {
-                let _ = tx.blocking_send(vec![CommandRequest {
+                let _ = tx.blocking_send(CommandRequest {
                     command: Command::FileCreated(FileCommand {
                         feature_id: TypeId::of::<T>(),
                         path: p.clone(),
                     }),
                     reply: None,
-                }]);
+                });
                 return;
             }
         }
@@ -263,13 +261,13 @@ where
                     if let EventKind::Modify(_) = de.event.kind {
                         debug!("notify-event: {de:?}");
                         for p in &de.paths {
-                            let _ = tx.blocking_send(vec![CommandRequest {
+                            let _ = tx.blocking_send(CommandRequest {
                                 command: Command::FileModified(FileCommand {
                                     feature_id: TypeId::of::<T>(),
                                     path: p.clone(),
                                 }),
                                 reply: None,
-                            }]);
+                            });
                         }
                     }
                 }

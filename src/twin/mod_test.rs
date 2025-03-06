@@ -742,7 +742,7 @@ pub mod mod_test {
                     .features
                     .get_mut(&TypeId::of::<consent::DeviceUpdateConsent>())
                     .unwrap()
-                    .command(&cmd.first().unwrap().command)
+                    .command(&cmd.command)
                     .await
             })
             .is_ok());
@@ -776,7 +776,7 @@ pub mod mod_test {
             assert!(block_on(async {
                 test_attr
                     .twin
-                    .handle_requests(vec![CommandRequest {
+                    .handle_request(CommandRequest {
                         command: feature::Command::from_direct_method(&DirectMethod {
                             name: "user_consent".to_string(),
                             payload: json!({"test_component": "1.0.0"}),
@@ -784,7 +784,7 @@ pub mod mod_test {
                         })
                         .unwrap(),
                         reply: None,
-                    }])
+                    })
                     .await
             })
             .is_ok());
