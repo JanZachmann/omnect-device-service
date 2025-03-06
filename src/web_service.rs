@@ -2,7 +2,6 @@ use crate::twin::feature::*;
 use actix_server::ServerHandle;
 use actix_web::{http::StatusCode, web, App, HttpResponse, HttpServer};
 use anyhow::{bail, Context, Result};
-use futures_util::StreamExt as _;
 use lazy_static::lazy_static;
 use log::{debug, error, info, warn};
 use reqwest::{header, Client};
@@ -142,17 +141,12 @@ impl WebService {
     }
 
     async fn factory_reset(
-        body: web::Payload,
+        body: web::Bytes,
         tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
     ) -> HttpResponse {
         debug!("WebService factory_reset");
 
-        let Ok(bytes) = Self::bytes_from_body(body).await else {
-            return HttpResponse::build(StatusCode::BAD_REQUEST)
-                .body("couldn't read body from stream");
-        };
-
-        match serde_json::from_slice(&bytes) {
+        match serde_json::from_slice(&body) {
             Ok(command) => {
                 let (tx_reply, rx_reply) = oneshot::channel();
                 let req = CommandRequest {
@@ -160,11 +154,11 @@ impl WebService {
                     reply: Some(tx_reply),
                 };
 
-                Self::exec_request(tx_request.as_ref(), rx_reply, req).await
+                Self::exec_request(tx_request, rx_reply, req).await
             }
             Err(e) => {
                 error!("couldn't parse FactoryResetCommand from body: {e:#}");
-                HttpResponse::build(StatusCode::BAD_REQUEST).body(e.to_string())
+                HttpResponse::BadRequest().body(e.to_string())
             }
         }
     }
@@ -178,7 +172,7 @@ impl WebService {
             reply: Some(tx_reply),
         };
 
-        Self::exec_request(tx_request.as_ref(), rx_reply, cmd).await
+        Self::exec_request(tx_request, rx_reply, cmd).await
     }
 
     async fn reload_network(
@@ -192,7 +186,7 @@ impl WebService {
             reply: Some(tx_reply),
         };
 
-        Self::exec_request(tx_request.as_ref(), rx_reply, cmd).await
+        Self::exec_request(tx_request, rx_reply, cmd).await
     }
 
     async fn republish(_tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>) -> HttpResponse {
@@ -220,17 +214,12 @@ impl WebService {
     }
 
     async fn load_fwupdate(
-        body: web::Payload,
+        body: web::Bytes,
         tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
     ) -> HttpResponse {
         debug!("WebService load_fwupdate");
 
-        let Ok(bytes) = Self::bytes_from_body(body).await else {
-            return HttpResponse::build(StatusCode::BAD_REQUEST)
-                .body("couldn't read body from stream");
-        };
-
-        match serde_json::from_slice(&bytes) {
+        match serde_json::from_slice(&body) {
             Ok(command) => {
                 let (tx_reply, rx_reply) = oneshot::channel();
                 let req = CommandRequest {
@@ -238,27 +227,22 @@ impl WebService {
                     reply: Some(tx_reply),
                 };
 
-                Self::exec_request(tx_request.as_ref(), rx_reply, req).await
+                Self::exec_request(tx_request, rx_reply, req).await
             }
             Err(e) => {
                 error!("couldn't parse LoadFirmwareUpdate from body: {e:#}");
-                HttpResponse::build(StatusCode::BAD_REQUEST).body(e.to_string())
+                HttpResponse::BadRequest().body(e.to_string())
             }
         }
     }
 
     async fn run_fwupdate(
-        body: web::Payload,
+        body: web::Bytes,
         tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
     ) -> HttpResponse {
         debug!("WebService run_fwupdate");
 
-        let Ok(bytes) = Self::bytes_from_body(body).await else {
-            return HttpResponse::build(StatusCode::BAD_REQUEST)
-                .body("couldn't read body from stream");
-        };
-
-        match serde_json::from_slice(&bytes) {
+        match serde_json::from_slice(&body) {
             Ok(command) => {
                 let (tx_reply, rx_reply) = oneshot::channel();
                 let req = CommandRequest {
@@ -266,17 +250,17 @@ impl WebService {
                     reply: Some(tx_reply),
                 };
 
-                Self::exec_request(tx_request.as_ref(), rx_reply, req).await
+                Self::exec_request(tx_request, rx_reply, req).await
             }
             Err(e) => {
                 error!("couldn't parse RunFirmwareUpdate from body: {e:#}");
-                HttpResponse::build(StatusCode::BAD_REQUEST).body(e.to_string())
+                HttpResponse::BadRequest().body(e.to_string())
             }
         }
     }
 
     async fn exec_request(
-        tx_request: &mpsc::Sender<Vec<CommandRequest>>,
+        tx_request: web::Data<mpsc::Sender<Vec<CommandRequest>>>,
         rx_reply: tokio::sync::oneshot::Receiver<CommandResult>,
         request: CommandRequest,
     ) -> HttpResponse {
@@ -306,15 +290,6 @@ impl WebService {
                 HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).body(e.to_string())
             }
         }
-    }
-
-    async fn bytes_from_body(mut body: web::Payload) -> Result<web::BytesMut> {
-        let mut bytes = web::BytesMut::new();
-        while let Some(item) = body.next().await {
-            bytes.extend_from_slice(&item?);
-        }
-
-        Ok(bytes)
     }
 }
 
