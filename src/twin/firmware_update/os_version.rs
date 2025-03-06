@@ -13,7 +13,7 @@ macro_rules! sw_versions_path {
 static OS_VERSION_REGEX: &str = r"^(\d+).(\d+).(\d+).(\d+)$";
 static SW_VERSION_FILE_REGEX: &str = r"^.* (\d+).(\d+).(\d+).(\d+)$";
 
-#[derive(PartialEq, Eq, PartialOrd)]
+#[derive(PartialEq, Eq)]
 pub struct OmnectOsVersion {
     major: u32,
     minor: u32,
@@ -21,8 +21,8 @@ pub struct OmnectOsVersion {
     build: u32,
 }
 
-impl Ord for OmnectOsVersion {
-    fn cmp(&self, other: &Self) -> Ordering {
+impl PartialOrd for OmnectOsVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let mut order = self.major.cmp(&other.major);
 
         if order == Ordering::Equal {
@@ -37,7 +37,7 @@ impl Ord for OmnectOsVersion {
             order = self.build.cmp(&other.build);
         }
 
-        order
+        Some(order)
     }
 }
 
