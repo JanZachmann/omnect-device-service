@@ -508,7 +508,7 @@ impl Twin {
                         reply: None,
                     })
                     .collect();
-                c.is_empty().then_some(c)
+                (!c.is_empty()).then_some(c)
             })
             .flat_map(stream::iter)
             .boxed()
