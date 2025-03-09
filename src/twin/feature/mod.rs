@@ -64,18 +64,18 @@ impl Command {
         }
     }
 
-    pub fn from_direct_method(direct_method: &DirectMethod) -> Result<Command> {
-        info!("direct method: {direct_method:?}");
+    pub fn from_direct_method(name: &str, payload: serde_json::Value) -> Result<Command> {
+        info!("direct method: {name}");
 
         // ToDo: write macro or fn for match arms
-        match direct_method.name.as_str() {
-            "factory_reset" => match serde_json::from_value(direct_method.payload.clone()) {
+        match name {
+            "factory_reset" => match serde_json::from_value(payload) {
                 Ok(c) => Ok(Command::FactoryReset(c)),
                 Err(e) => {
                     bail!("cannot parse FactoryReset from direct method payload {e}")
                 }
             },
-            "user_consent" => match serde_json::from_value(direct_method.payload.clone()) {
+            "user_consent" => match serde_json::from_value(payload) {
                 Ok(c) => Ok(Command::UserConsent(consent::UserConsentCommand {
                     user_consent: c,
                 })),
@@ -83,45 +83,91 @@ impl Command {
                     bail!("cannot parse UserConsent from direct method payload {e}")
                 }
             },
-            "get_ssh_pub_key" => match serde_json::from_value(direct_method.payload.clone()) {
+            "get_ssh_pub_key" => match serde_json::from_value(payload) {
                 Ok(c) => Ok(Command::GetSshPubKey(c)),
                 Err(e) => {
                     bail!("cannot parse GetSshPubKey from direct method payload {e}")
                 }
             },
-            "open_ssh_tunnel" => match serde_json::from_value(direct_method.payload.clone()) {
+            "open_ssh_tunnel" => match serde_json::from_value(payload) {
                 Ok(c) => Ok(Command::OpenSshTunnel(c)),
                 Err(e) => {
                     bail!("cannot parse OpenSshTunnel from direct method payload {e}")
                 }
             },
-            "close_ssh_tunnel" => match serde_json::from_value(direct_method.payload.clone()) {
+            "close_ssh_tunnel" => match serde_json::from_value(payload) {
                 Ok(c) => Ok(Command::CloseSshTunnel(c)),
                 Err(e) => {
                     bail!("cannot parse CloseSshTunnel from direct method payload {e}")
                 }
             },
             "reboot" => Ok(Command::Reboot),
-            "set_wait_online_timeout" => {
-                match serde_json::from_value(direct_method.payload.clone()) {
-                    Ok(c) => Ok(Command::SetWaitOnlineTimeout(c)),
-                    Err(e) => {
-                        bail!("cannot parse CloseSshTunnel from direct method payload {e}")
-                    }
+            "set_wait_online_timeout" => match serde_json::from_value(payload) {
+                Ok(c) => Ok(Command::SetWaitOnlineTimeout(c)),
+                Err(e) => {
+                    bail!("cannot parse CloseSshTunnel from direct method payload {e}")
                 }
-            }
+            },
             _ => {
-                bail!(
-                    "cannot parse direct method {} with payload {}",
-                    direct_method.name,
-                    direct_method.payload
-                )
+                bail!("unknown direct method {} with payload {}", name, payload)
             }
         }
     }
 
     // we only log errors and don't fail in this function if input cannot be parsed
-    pub fn from_desired_property(update: TwinUpdate) -> Vec<Command> {
+    pub fn from_desired_property(name: &str, value: serde_json::Value) -> Result<Option<Command>> {
+        info!("desired property: {name}");
+
+        match name {
+            "ssh_tunnel_ca_pub" => match serde_json::from_value(value) {
+                Ok(c) => Ok(Some(Command::DesiredUpdateDeviceSshCa(c))),
+                Err(e) => {
+                    bail!("from_desired_property: cannot parse DesiredUpdateDeviceSshCa {e:#}")
+                }
+            },
+            "general_consent" => match serde_json::from_value(value) {
+                Ok(c) => Ok(Some(Command::DesiredGeneralConsent(c))),
+                Err(e) => {
+                    bail!("from_desired_property: cannot parse DesiredGeneralConsentCommand {e:#}")
+                }
+            },
+            "$version" => {
+                /*ignore*/
+                Ok(None)
+            }
+            _ => {
+                warn!("from_desired_property: unhandled desired property {name}");
+                Ok(None)
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CommandRequest {
+    pub command: Command,
+    pub reply: Option<oneshot::Sender<CommandResult>>,
+}
+
+impl CommandRequest {
+    pub fn from_direct_method(direct_method: DirectMethod) -> Option<CommandRequest> {
+        match Command::from_direct_method(&direct_method.name, direct_method.payload) {
+            Ok(command) => Some(CommandRequest {
+                command,
+                reply: Some(direct_method.responder),
+            }),
+            Err(e) => {
+                error!("{e:#}");
+                if direct_method.responder.send(Err(e)).is_err() {
+                    error!("direct method response receiver dropped")
+                }
+                None
+            }
+        }
+    }
+
+    // we only log errors and don't fail in this function if input cannot be parsed
+    pub fn from_desired_property(update: TwinUpdate) -> Vec<CommandRequest> {
         info!("desired property: {update:?}");
         let mut cmds = vec![];
 
@@ -132,33 +178,19 @@ impl Command {
 
         if let Some(map) = value.as_object() {
             for k in map.keys() {
-                match k.as_str() {
-                    "ssh_tunnel_ca_pub" => match serde_json::from_value(value.clone()) {
-                        Ok(c) => cmds.push(Command::DesiredUpdateDeviceSshCa(c)),
-                        Err(e) => error!(
-                            "from_desired_property: cannot parse DesiredUpdateDeviceSshCa {e:#}"
-                        ),
-                    },
-                    "general_consent" => match serde_json::from_value(value.clone()) {
-                        Ok(c) => cmds.push(Command::DesiredGeneralConsent(c)),
-                        Err(e) => error!(
-                            "from_desired_property: cannot parse DesiredGeneralConsentCommand {e:#}"
-                        ),
-                    },
-                    "$version" => { /*ignore*/ }
-                    _ => warn!("from_desired_property: unhandled desired property {k}"),
-                };
+                match Command::from_desired_property(k.as_str(), value.clone()) {
+                    Ok(Some(command)) => cmds.push(CommandRequest {
+                        command,
+                        reply: None,
+                    }),
+                    Ok(None) => { /* ignore */ }
+                    Err(e) => error!("{e}"),
+                }
             }
         }
 
         cmds
     }
-}
-
-#[derive(Debug)]
-pub struct CommandRequest {
-    pub command: Command,
-    pub reply: Option<oneshot::Sender<CommandResult>>,
 }
 
 pub type CommandResult = Result<Option<serde_json::Value>>;
@@ -295,47 +327,30 @@ mod tests {
     use reboot::SetWaitOnlineTimeoutCommand;
     use serde_json::json;
     use std::str::FromStr;
-    use tokio::sync::oneshot;
 
     #[test]
     fn from_direct_method_test() {
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
-        assert!(Command::from_direct_method(&DirectMethod {
-            name: "unknown".to_string(),
-            payload: json!({}),
-            responder,
-        })
-        .is_err());
+        assert!(Command::from_direct_method("unknown", json!({})).is_err());
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
-        assert!(Command::from_direct_method(&DirectMethod {
-            name: "factory_reset".to_string(),
-            payload: json!({}),
-            responder,
-        })
-        .is_err());
+        assert!(Command::from_direct_method("factory_reset", json!({})).is_err());
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
-        assert!(Command::from_direct_method(&DirectMethod {
-            name: "factory_reset".to_string(),
-            payload: json!({
+        assert!(Command::from_direct_method(
+            "factory_reset",
+            json!({
                 "mode": 0,
                 "preserve": ["1"],
             }),
-            responder,
-        })
+        )
         .is_err());
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
         assert_eq!(
-            Command::from_direct_method(&DirectMethod {
-                name: "factory_reset".to_string(),
-                payload: json!({
+            Command::from_direct_method(
+                "factory_reset",
+                json!({
                     "mode": 1,
                     "preserve": ["1"],
                 }),
-                responder,
-            })
+            )
             .unwrap(),
             Command::FactoryReset(factory_reset::FactoryResetCommand {
                 mode: factory_reset::FactoryResetMode::Mode1,
@@ -343,16 +358,14 @@ mod tests {
             })
         );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
         assert_eq!(
-            Command::from_direct_method(&DirectMethod {
-                name: "factory_reset".to_string(),
-                payload: json!({
+            Command::from_direct_method(
+                "factory_reset",
+                json!({
                     "mode": 1,
                     "preserve": [],
                 }),
-                responder,
-            })
+            )
             .unwrap(),
             Command::FactoryReset(factory_reset::FactoryResetCommand {
                 mode: factory_reset::FactoryResetMode::Mode1,
@@ -360,22 +373,10 @@ mod tests {
             })
         );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
-        assert!(Command::from_direct_method(&DirectMethod {
-            name: "user_consent".to_string(),
-            payload: json!({"foo": 1}),
-            responder,
-        })
-        .is_err());
+        assert!(Command::from_direct_method("user_consent", json!({"foo": 1}),).is_err());
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
         assert_eq!(
-            Command::from_direct_method(&DirectMethod {
-                name: "user_consent".to_string(),
-                payload: json!({"foo": "bar"}),
-                responder,
-            })
-            .unwrap(),
+            Command::from_direct_method("user_consent", json!({"foo": "bar"}),).unwrap(),
             Command::UserConsent(consent::UserConsentCommand {
                 user_consent: std::collections::HashMap::from([(
                     "foo".to_string(),
@@ -384,53 +385,42 @@ mod tests {
             })
         );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
-        assert!(Command::from_direct_method(&DirectMethod {
-            name: "close_ssh_tunnel".to_string(),
-            payload: json!({"tunnel_id": "no-uuid"}),
-            responder,
-        })
-        .is_err());
+        assert!(
+            Command::from_direct_method("close_ssh_tunnel", json!({"tunnel_id": "no-uuid"}),)
+                .is_err()
+        );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
         assert_eq!(
-            Command::from_direct_method(&DirectMethod {
-                name: "close_ssh_tunnel".to_string(),
-                payload: json!({"tunnel_id": "3015d09d-b5e5-4c47-91d1-72460fd67b5d"}),
-                responder,
-            })
+            Command::from_direct_method(
+                "close_ssh_tunnel",
+                json!({"tunnel_id": "3015d09d-b5e5-4c47-91d1-72460fd67b5d"}),
+            )
             .unwrap(),
             Command::CloseSshTunnel(ssh_tunnel::CloseSshTunnelCommand {
                 tunnel_id: "3015d09d-b5e5-4c47-91d1-72460fd67b5d".to_string(),
             })
         );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
-        assert!(Command::from_direct_method(&DirectMethod {
-            name: "get_ssh_pub_key".to_string(),
-            payload: json!({"tunnel_id": "no-uuid"}),
-            responder,
-        })
-        .is_err());
+        assert!(
+            Command::from_direct_method("get_ssh_pub_key", json!({"tunnel_id": "no-uuid"}),)
+                .is_err()
+        );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
         assert_eq!(
-            Command::from_direct_method(&DirectMethod {
-                name: "get_ssh_pub_key".to_string(),
-                payload: json!({"tunnel_id": "3015d09d-b5e5-4c47-91d1-72460fd67b5d"}),
-                responder,
-            })
+            Command::from_direct_method(
+                "get_ssh_pub_key",
+                json!({"tunnel_id": "3015d09d-b5e5-4c47-91d1-72460fd67b5d"})
+            )
             .unwrap(),
             Command::GetSshPubKey(ssh_tunnel::GetSshPubKeyCommand {
                 tunnel_id: "3015d09d-b5e5-4c47-91d1-72460fd67b5d".to_string(),
             })
         );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
         assert_eq!(
-            Command::from_direct_method(&DirectMethod {
-                name: "open_ssh_tunnel".to_string(),
-                payload: json!({
+            Command::from_direct_method(
+                "open_ssh_tunnel",
+                json!({
                     "tunnel_id": "3015d09d-b5e5-4c47-91d1-72460fd67b5d",
                     "certificate": "cert",
                     "host": "my-host",
@@ -438,8 +428,7 @@ mod tests {
                     "user": "usr",
                     "socket_path": "/socket",
                 }),
-                responder,
-            })
+            )
             .unwrap(),
             Command::OpenSshTunnel(ssh_tunnel::OpenSshTunnelCommand {
                 tunnel_id: "3015d09d-b5e5-4c47-91d1-72460fd67b5d".to_string(),
@@ -453,67 +442,46 @@ mod tests {
             })
         );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
         assert_eq!(
-            Command::from_direct_method(&DirectMethod {
-                name: "get_ssh_pub_key".to_string(),
-                payload: json!({"tunnel_id": "3015d09d-b5e5-4c47-91d1-72460fd67b5d"}),
-                responder,
-            })
+            Command::from_direct_method(
+                "get_ssh_pub_key",
+                json!({"tunnel_id": "3015d09d-b5e5-4c47-91d1-72460fd67b5d"}),
+            )
             .unwrap(),
             Command::GetSshPubKey(ssh_tunnel::GetSshPubKeyCommand {
                 tunnel_id: "3015d09d-b5e5-4c47-91d1-72460fd67b5d".to_string(),
             })
         );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
         assert_eq!(
-            Command::from_direct_method(&DirectMethod {
-                name: "reboot".to_string(),
-                payload: json!({}),
-                responder,
-            })
-            .unwrap(),
+            Command::from_direct_method("reboot", json!({}),).unwrap(),
             Command::Reboot
         );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
         assert_eq!(
-            Command::from_direct_method(&DirectMethod {
-                name: "set_wait_online_timeout".to_string(),
-                payload: json!({}),
-                responder,
-            })
-            .unwrap(),
+            Command::from_direct_method("set_wait_online_timeout", json!({}),).unwrap(),
             Command::SetWaitOnlineTimeout(SetWaitOnlineTimeoutCommand { timeout_secs: None })
         );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
         assert_eq!(
-            Command::from_direct_method(&DirectMethod {
-                name: "set_wait_online_timeout".to_string(),
-                payload: json!({"timeout_secs": 1}),
-                responder,
-            })
-            .unwrap(),
+            Command::from_direct_method("set_wait_online_timeout", json!({"timeout_secs": 1}),)
+                .unwrap(),
             Command::SetWaitOnlineTimeout(SetWaitOnlineTimeoutCommand {
                 timeout_secs: Some(1),
             })
         );
 
-        let (responder, _rx) = oneshot::channel::<CommandResult>();
-        assert!(Command::from_direct_method(&DirectMethod {
-            name: "set_wait_online_timeout".to_string(),
-            payload: json!({"timeout_secs": "1"}),
-            responder,
-        })
+        assert!(Command::from_direct_method(
+            "set_wait_online_timeout",
+            json!({"timeout_secs": "1"}),
+        )
         .is_err());
     }
 
     #[test]
     fn from_desired_property_test() {
         assert_eq!(
-            Command::from_desired_property(TwinUpdate {
+            CommandRequest::from_desired_property(TwinUpdate {
                 state: TwinUpdateState::Partial,
                 value: json!({})
             }),

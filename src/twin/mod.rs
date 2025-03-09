@@ -478,22 +478,7 @@ impl Twin {
     fn direct_method_stream(rx: mpsc::Receiver<DirectMethod>) -> CommandRequestStream {
         ReceiverStream::new(rx)
             .filter_map(|dm| async move {
-                match Command::from_direct_method(&dm) {
-                    Ok(command) => Some(CommandRequest {
-                        command,
-                        reply: Some(dm.responder),
-                    }),
-                    Err(e) => {
-                        error!(
-                            "parsing direct method: {} with payload: {} failed with error: {e:#}",
-                            dm.name, dm.payload
-                        );
-                        if dm.responder.send(Err(e)).is_err() {
-                            error!("direct method response receiver dropped")
-                        }
-                        None
-                    }
-                }
+                CommandRequest::from_direct_method(dm)
             })
             .boxed()
     }
@@ -501,13 +486,7 @@ impl Twin {
     fn desired_properties_stream(rx: mpsc::Receiver<TwinUpdate>) -> CommandRequestStream {
         ReceiverStream::new(rx)
             .filter_map(|twin| async move {
-                let c: Vec<CommandRequest> = Command::from_desired_property(twin)
-                    .iter()
-                    .map(|cmd| CommandRequest {
-                        command: cmd.clone(),
-                        reply: None,
-                    })
-                    .collect();
+                let c: Vec<CommandRequest> = CommandRequest::from_desired_property(twin);
                 (!c.is_empty()).then_some(c)
             })
             .flat_map(stream::iter)
