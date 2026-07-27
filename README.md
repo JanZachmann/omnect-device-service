@@ -923,6 +923,13 @@ curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/
 curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/healthcheck/v1
 ```
 
+Independent of this endpoint, the [healthcheck](healthcheck/) directory contains
+scripts that check specific system functions and rate each one green, yellow,
+or red. Among them:
+
+- `crash_loop`: rates a service red when it is stuck in a crash loop (in
+  auto-restart, or 3+ restarts without becoming active)
+
 ### Status updates
 
 omnect-device-service is capable to publish certain properties to a list of defined endpoints. Currently the following properties are published:

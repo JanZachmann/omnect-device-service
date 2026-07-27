@@ -9,7 +9,9 @@ After flashing an update to the new root partition, the device boots this partit
 The following checks must be passed in order to successfully validate an update:
 
 - omnect-device-service.service status is in state [running](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html#status%20PATTERN%E2%80%A6%7CPID%E2%80%A6%5D)
-- system is in state [running](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html#is-system-running)
+- system is in state [running](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html#is-system-running) and no service is in a crash loop
+  (repeatedly restarting without ever becoming active); a `degraded` system
+  state fails the validation immediately
 - in case local update is **NOT** [configured](#local-validation)
   - adu-agent could be started successfully
   - omnect-device-service is connected to iothub (successfully provisioned)
@@ -40,6 +42,15 @@ The following checks must be passed in order to successfully validate an update:
 - configurable via environment variable `UPDATE_VALIDATION_TIMEOUT_IN_SECS`
 - timeout used internally by omnect-device-service
 - the timeout is canceled as soon as initialization completed and (if configured) iothub connection is established
+
+#### System health deadline
+
+- the system state is polled; if it does not become healthy within the
+  internal timeout minus a safety margin, validation fails with the last
+  observed state
+- on a failed validation the reboot reason `swupdate-validation-failed` is
+  logged with the cause as extra info: the failed units, the crash-looping
+  units, or the last system state
 
 #### Global timeout
 
