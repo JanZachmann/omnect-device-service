@@ -7,19 +7,25 @@ CRASH_LOOP_RESTART_THRESHOLD=3
 
 # prints crash-looping services to stdout
 function find_crash_loops() {
-    local unit props active sub nrestarts found=""
+    local unit props active sub nrestarts found="" units
 
-    for unit in $(systemctl list-units --all --type=service --no-legend --plain | awk '{print $1}'); do
-        props=$(systemctl show "${unit}" -p ActiveState,SubState,NRestarts 2>/dev/null) || continue
-        active=$(echo "${props}" | sed -n 's/^ActiveState=//p')
-        sub=$(echo "${props}" | sed -n 's/^SubState=//p')
-        nrestarts=$(echo "${props}" | sed -n 's/^NRestarts=//p')
+    units=$(systemctl list-units --all --type=service --no-legend --plain | awk '{print $1}')
+    if [ -z "${units}" ]; then
+	echo " failed to list services"
+	return
+    fi
 
-        if [ "${active}" = "activating" ] && [ "${sub}" = "auto-restart" ]; then
-            found="${found} ${unit}(auto-restart)"
-        elif [ -n "${nrestarts}" ] && [ "${nrestarts}" -ge "${CRASH_LOOP_RESTART_THRESHOLD}" ] && [ "${active}" != "active" ]; then
-            found="${found} ${unit}(NRestarts=${nrestarts})"
-        fi
+    for unit in ${units}; do
+	props=$(systemctl show "${unit}" -p ActiveState,SubState,NRestarts 2>/dev/null) || continue
+	active=$(echo "${props}" | sed -n 's/^ActiveState=//p')
+	sub=$(echo "${props}" | sed -n 's/^SubState=//p')
+	nrestarts=$(echo "${props}" | sed -n 's/^NRestarts=//p')
+
+	if [ "${active}" = "activating" ] && [ "${sub}" = "auto-restart" ]; then
+	    found="${found} ${unit}(auto-restart)"
+	elif [ -n "${nrestarts}" ] && [ "${nrestarts}" -ge "${CRASH_LOOP_RESTART_THRESHOLD}" ] && [ "${active}" != "active" ]; then
+	    found="${found} ${unit}(NRestarts=${nrestarts})"
+	fi
     done
 
     echo "${found}"
