@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use log::info;
 use sd_notify::NotifyState;
 use std::sync::Once;
-use systemd_zbus::ManagerProxy;
+use systemd_zbus::{ActiveState, ManagerProxy, SubState};
 use tokio_stream::StreamExt;
 
 pub fn sd_notify_ready() {
@@ -91,4 +91,161 @@ pub async fn wait_for_system_running() -> Result<()> {
 #[cfg(feature = "mock")]
 pub async fn reboot(_reason: &str, _extra_info: &str) -> Result<()> {
     Ok(())
+}
+
+#[allow(dead_code)]
+const CRASH_LOOP_RESTART_THRESHOLD: u32 = 3;
+
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
+pub(crate) struct UnitHealth {
+    name: String,
+    active: ActiveState,
+    sub_state: SubState,
+    n_restarts: u32,
+}
+
+#[derive(Debug, PartialEq)]
+#[allow(dead_code)]
+enum SystemHealth {
+    Healthy,
+    Starting(String),
+    Degraded(Vec<String>),
+    CrashLooping(Vec<String>),
+}
+
+#[allow(dead_code)]
+fn crash_looping_units(units: &[UnitHealth]) -> Vec<String> {
+    let mut looping: Vec<String> = units
+        .iter()
+        .filter(|u| {
+            (u.active == ActiveState::Activating && u.sub_state == SubState::AutoRestart)
+                || (u.n_restarts >= CRASH_LOOP_RESTART_THRESHOLD && u.active != ActiveState::Active)
+        })
+        .map(|u| u.name.clone())
+        .collect();
+    looping.sort();
+    looping
+}
+
+#[allow(dead_code)]
+fn rate_system_health(system_state: &str, units: &[UnitHealth]) -> SystemHealth {
+    match system_state {
+        "running" | "degraded" => {
+            let looping = crash_looping_units(units);
+            if !looping.is_empty() {
+                return SystemHealth::CrashLooping(looping);
+            }
+            if system_state == "degraded" {
+                let mut failed: Vec<String> = units
+                    .iter()
+                    .filter(|u| u.active == ActiveState::Failed)
+                    .map(|u| u.name.clone())
+                    .collect();
+                failed.sort();
+                return SystemHealth::Degraded(failed);
+            }
+            SystemHealth::Healthy
+        }
+        other => SystemHealth::Starting(other.to_string()),
+    }
+}
+
+#[allow(dead_code)]
+fn degraded_extra_info(units: &[String]) -> String {
+    format!("system degraded, failed units: {}", units.join(" "))
+}
+
+#[allow(dead_code)]
+fn crash_loop_extra_info(units: &[String]) -> String {
+    format!("crash-looping units: {}", units.join(" "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use systemd_zbus::{ActiveState, SubState};
+
+    fn unit(name: &str, active: ActiveState, sub_state: SubState, n_restarts: u32) -> UnitHealth {
+        UnitHealth {
+            name: name.to_string(),
+            active,
+            sub_state,
+            n_restarts,
+        }
+    }
+
+    #[test]
+    fn healthy_when_running_without_crash_loops() {
+        let units = vec![unit("a.service", ActiveState::Active, SubState::Running, 0)];
+        assert_eq!(rate_system_health("running", &units), SystemHealth::Healthy);
+    }
+
+    #[test]
+    fn non_final_states_keep_polling() {
+        assert_eq!(
+            rate_system_health("starting", &[]),
+            SystemHealth::Starting("starting".to_string())
+        );
+    }
+
+    #[test]
+    fn degraded_lists_failed_units_sorted() {
+        let units = vec![
+            unit("b.service", ActiveState::Failed, SubState::Failed, 0),
+            unit("a.service", ActiveState::Failed, SubState::Failed, 0),
+        ];
+        assert_eq!(
+            rate_system_health("degraded", &units),
+            SystemHealth::Degraded(vec!["a.service".to_string(), "b.service".to_string()])
+        );
+    }
+
+    #[test]
+    fn auto_restart_is_a_crash_loop_even_when_running() {
+        let units = vec![unit(
+            "loop.service",
+            ActiveState::Activating,
+            SubState::AutoRestart,
+            1,
+        )];
+        assert_eq!(
+            rate_system_health("running", &units),
+            SystemHealth::CrashLooping(vec!["loop.service".to_string()])
+        );
+    }
+
+    #[test]
+    fn restart_threshold_is_a_crash_loop() {
+        let units = vec![unit(
+            "loop.service",
+            ActiveState::Inactive,
+            SubState::Dead,
+            CRASH_LOOP_RESTART_THRESHOLD,
+        )];
+        assert_eq!(
+            rate_system_health("running", &units),
+            SystemHealth::CrashLooping(vec!["loop.service".to_string()])
+        );
+    }
+
+    #[test]
+    fn recovered_unit_with_restart_history_is_not_a_crash_loop() {
+        let units = vec![unit("a.service", ActiveState::Active, SubState::Running, 5)];
+        assert_eq!(rate_system_health("running", &units), SystemHealth::Healthy);
+    }
+
+    // exact strings are a contract with omnect-os CI
+    // (TEST_REBOOT_REASON_CHECK_EXTRA_INFO does an exact match)
+    #[test]
+    fn extra_info_strings_match_ci_contract() {
+        assert_eq!(
+            degraded_extra_info(&["dummy-failed.service".to_string()]),
+            "system degraded, failed units: dummy-failed.service"
+        );
+        assert_eq!(
+            crash_loop_extra_info(&["dummy-crash-loop.service".to_string()]),
+            "crash-looping units: dummy-crash-loop.service"
+        );
+    }
 }
