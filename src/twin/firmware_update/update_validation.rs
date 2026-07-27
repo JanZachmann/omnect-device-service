@@ -23,6 +23,8 @@ static UPDATE_VALIDATION_COMPLETE_BARRIER_FILE: &str =
 static UPDATE_VALIDATION_FAILED_FILE: &str =
     "/run/omnect-device-service/omnect_validate_update_failed";
 static UPDATE_VALIDATION_TIMEOUT_IN_SECS_DEFAULT: u64 = 300;
+static SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS: u64 = 30;
+static SYSTEM_HEALTHY_DEADLINE_MIN_IN_SECS: u64 = 60;
 
 #[derive(Clone, Debug, Default, Serialize)]
 enum UpdateValidationStatus {
@@ -148,12 +150,14 @@ impl UpdateValidation {
     async fn validate(local_update: bool) -> Result<()> {
         debug!("validate update");
 
-        systemd::wait_for_system_running().await?;
+        // the margin keeps the descriptive error ahead of the generic
+        // validation timeout so it ends up in the reboot reason
+        let deadline = Self::timeout()
+            .saturating_sub(Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS))
+            .max(Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MIN_IN_SECS));
+        systemd::wait_for_system_healthy(deadline).await?;
 
-        /* ToDo: if it returns with an error, we may want to handle the state
-         * "degraded" and possibly ignore certain failed services via configuration
-         */
-        info!("system is running");
+        info!("system is healthy");
 
         // remove iot-hub-device-service barrier file and start service as part of validation
         debug!("starting {IOT_HUB_DEVICE_UPDATE_SERVICE}");

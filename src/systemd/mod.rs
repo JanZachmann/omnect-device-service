@@ -7,7 +7,6 @@ use log::info;
 use sd_notify::NotifyState;
 use std::sync::Once;
 use systemd_zbus::{ActiveState, ManagerProxy, SubState};
-use tokio_stream::StreamExt;
 
 pub fn sd_notify_ready() {
     static SD_NOTIFY_ONCE: Once = Once::new();
@@ -67,25 +66,93 @@ pub async fn reboot(reason: &str, extra_info: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn wait_for_system_running() -> Result<()> {
+const SYSTEM_HEALTHY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+// a single clean poll can race a crash loop's short start window
+const HEALTHY_CONFIRMATION_POLLS: u32 = 3;
+
+pub async fn wait_for_system_healthy(deadline: std::time::Duration) -> Result<()> {
     let connection = system_connection().await?;
-    // here we use manager which explicitly doesn't cache the system state
+    // we poll SystemState explicitly; the property cache must not hide changes
     let manager = ManagerProxy::builder(&connection)
         .uncached_properties(&["SystemState"])
         .build()
         .await
-        .context("wait_for_system_running: failed to create manager")?;
+        .context("wait_for_system_healthy: failed to create manager")?;
 
-    if manager.system_state().await? != "running" {
-        manager
-            .receive_system_state_changed()
+    let start = std::time::Instant::now();
+    let mut healthy_polls = 0u32;
+
+    loop {
+        let state = manager
+            .system_state()
             .await
-            .filter(|p| p.name() == "running")
-            .next()
-            .await;
+            .context("wait_for_system_healthy: failed to get system state")?;
+
+        let health = match state.as_str() {
+            "running" | "degraded" => {
+                let units = collect_unit_health(&connection, &manager).await?;
+                rate_system_health(&state, &units)
+            }
+            _ => SystemHealth::Starting(state.clone()),
+        };
+
+        match health {
+            SystemHealth::Healthy => {
+                healthy_polls += 1;
+                if healthy_polls >= HEALTHY_CONFIRMATION_POLLS {
+                    return Ok(());
+                }
+            }
+            SystemHealth::Starting(_) => healthy_polls = 0,
+            SystemHealth::Degraded(units) => anyhow::bail!(degraded_extra_info(&units)),
+            SystemHealth::CrashLooping(units) => anyhow::bail!(crash_loop_extra_info(&units)),
+        }
+
+        if start.elapsed() >= deadline {
+            anyhow::bail!("system not healthy within deadline, last state: {state}");
+        }
+
+        tokio::time::sleep(SYSTEM_HEALTHY_POLL_INTERVAL).await;
+    }
+}
+
+async fn collect_unit_health(
+    connection: &zbus::Connection,
+    manager: &ManagerProxy<'_>,
+) -> Result<Vec<UnitHealth>> {
+    let mut units = vec![];
+
+    for unit in manager
+        .list_units()
+        .await
+        .context("collect_unit_health: failed to list units")?
+    {
+        if !unit.name.ends_with(".service") {
+            continue;
+        }
+
+        // NRestarts is only relevant for units that are not active
+        let n_restarts = if unit.active == ActiveState::Active {
+            0
+        } else {
+            systemd_zbus::ServiceProxy::builder(connection)
+                .path(unit.path.clone())?
+                .build()
+                .await?
+                .n_restarts()
+                .await
+                .unwrap_or(0)
+        };
+
+        units.push(UnitHealth {
+            name: unit.name,
+            active: unit.active,
+            sub_state: unit.sub_state,
+            n_restarts,
+        });
     }
 
-    Ok(())
+    Ok(units)
 }
 
 #[cfg(feature = "mock")]
@@ -93,11 +160,9 @@ pub async fn reboot(_reason: &str, _extra_info: &str) -> Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
 const CRASH_LOOP_RESTART_THRESHOLD: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub(crate) struct UnitHealth {
     name: String,
     active: ActiveState,
@@ -106,7 +171,6 @@ pub(crate) struct UnitHealth {
 }
 
 #[derive(Debug, PartialEq)]
-#[allow(dead_code)]
 enum SystemHealth {
     Healthy,
     Starting(String),
@@ -114,7 +178,6 @@ enum SystemHealth {
     CrashLooping(Vec<String>),
 }
 
-#[allow(dead_code)]
 fn crash_looping_units(units: &[UnitHealth]) -> Vec<String> {
     let mut looping: Vec<String> = units
         .iter()
@@ -128,7 +191,6 @@ fn crash_looping_units(units: &[UnitHealth]) -> Vec<String> {
     looping
 }
 
-#[allow(dead_code)]
 fn rate_system_health(system_state: &str, units: &[UnitHealth]) -> SystemHealth {
     match system_state {
         "running" | "degraded" => {
@@ -151,12 +213,10 @@ fn rate_system_health(system_state: &str, units: &[UnitHealth]) -> SystemHealth 
     }
 }
 
-#[allow(dead_code)]
 fn degraded_extra_info(units: &[String]) -> String {
     format!("system degraded, failed units: {}", units.join(" "))
 }
 
-#[allow(dead_code)]
 fn crash_loop_extra_info(units: &[String]) -> String {
     format!("crash-looping units: {}", units.join(" "))
 }
