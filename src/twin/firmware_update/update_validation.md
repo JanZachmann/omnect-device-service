@@ -57,6 +57,11 @@ The following checks must be passed in order to successfully validate an update:
 - defined in [update-validation-observer.timer](../../../systemd/update-validation-observer.timer)
 - reboots the system if /run/omnect-device-service/omnect_validate_update isn't deleted by omnect-device-service in time
 
+### Crash loop detection
+
+- configurable via environment variable `CRASH_LOOP_RESTART_THRESHOLD` (default 3)
+- a unit counts as crash-looping after this many restarts while not active
+
 ### Local validation
 
 In `/var/lib/omnect-device-service/update_validation_conf.json` it can be configured, if the update validation happens in a local environment, where no connection to the iothub is present. (if the file doesn't exist `"local": false` is assumed):
