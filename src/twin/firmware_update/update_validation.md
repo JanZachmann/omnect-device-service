@@ -10,7 +10,7 @@ The following checks must be passed in order to successfully validate an update:
 
 - omnect-device-service.service status is in state [running](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html#status%20PATTERN%E2%80%A6%7CPID%E2%80%A6%5D)
 - system is in state [running](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html#is-system-running) and no service is in a crash loop
-  (repeatedly restarting without ever becoming active); a `degraded` system
+  (repeatedly restarting without staying active); a `degraded` system
   state fails the validation immediately
 - in case local update is **NOT** [configured](#local-validation)
   - adu-agent could be started successfully

@@ -928,7 +928,7 @@ scripts that check specific system functions and rate each one green, yellow,
 or red. Among them:
 
 - `crash_loop`: rates a service red when it is stuck in a crash loop (in
-  auto-restart, or 3+ restarts without becoming active)
+  auto-restart, or 3+ restarts while not active)
 
 ### Status updates
 
