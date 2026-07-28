@@ -67,25 +67,31 @@ pub struct CustomConfig {
 #[derive(Debug, Deserialize_repr, PartialEq, Serialize_repr)]
 #[repr(u32)]
 pub enum FactoryResetStatus {
-    ModeSupported = 0,
-    ModeUnsupported = 1,
-    BackupRestoreError = 2,
-    ConfigurationError = 3,
+    Success = 0,
+    Invalid = 1,
+    Error = 2,
+    ConfigError = 3,
     Warning = 4,
     // catch-all so a future status code doesn't fail parsing and ODS startup
     #[serde(other)]
     Unknown = u32::MAX,
 }
 
+// absent options serialize as null: twin reports are merge patches, so an
+// omitted key would keep the value of a previous result
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 struct FactoryResetResult {
     status: FactoryResetStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     context: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     error: Option<String>,
     #[serde(default)]
     paths: Vec<String>,
+    // true once the destructive phase began; distinguishes a safe abort from
+    // a failure after data was already wiped
+    #[serde(default)]
+    data_wiped: bool,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
@@ -346,10 +352,11 @@ mod tests {
         assert_eq!(
             reported,
             FactoryResetResult {
-                status: FactoryResetStatus::ModeSupported,
+                status: FactoryResetStatus::Success,
                 error: None,
                 context: None,
                 paths: vec![],
+                data_wiped: true,
             }
         );
     }
@@ -419,10 +426,11 @@ mod tests {
         assert_eq!(
             FactoryReset::factory_reset_result().unwrap().unwrap(),
             FactoryResetResult {
-                status: FactoryResetStatus::ModeSupported,
+                status: FactoryResetStatus::Success,
                 error: None,
                 paths: vec![],
                 context: None,
+                data_wiped: true,
             }
         );
 
@@ -436,9 +444,10 @@ mod tests {
                 .expect("warning result present"),
             FactoryResetResult {
                 status: FactoryResetStatus::Warning,
-                error: Some("partition needed a second mkfs".to_string()),
-                paths: vec!["/data/foo".to_string()],
-                context: Some("format data partition".to_string()),
+                error: None,
+                paths: vec!["network".to_string()],
+                context: Some("reformat retried for: data".to_string()),
+                data_wiped: true,
             }
         );
 
@@ -449,9 +458,14 @@ mod tests {
         assert_eq!(
             FactoryReset::factory_reset_result()
                 .expect("parse unknown status result")
-                .expect("unknown status result present")
-                .status,
-            FactoryResetStatus::Unknown
+                .expect("unknown status result present"),
+            FactoryResetResult {
+                status: FactoryResetStatus::Unknown,
+                error: Some("error of a future status code".to_string()),
+                paths: vec![],
+                context: None,
+                data_wiped: false,
+            }
         );
 
         crate::common::set_env_var(
@@ -459,6 +473,40 @@ mod tests {
             "testfiles/positive/omnect-os-initramfs-normal-boot.json",
         );
         assert!(FactoryReset::factory_reset_result().unwrap().is_none());
+
+        crate::common::set_env_var(
+            "FACTORY_RESET_RESULT_FILE_PATH",
+            "testfiles/positive/omnect-os-initramfs-factory-reset-null.json",
+        );
+        assert!(
+            FactoryReset::factory_reset_result()
+                .expect("parse null result")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn factory_reset_new_with_unknown_status_test() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let config_file_path = temp_dir.path().join("factory-reset.json");
+        let custom_dir_path = temp_dir.path().join("factory-reset.d");
+
+        std::fs::copy(
+            "testfiles/positive/factory-reset.json",
+            config_file_path.clone().as_path(),
+        )
+        .expect("copy config");
+        std::fs::create_dir_all(custom_dir_path.clone()).expect("create custom dir");
+
+        crate::common::set_env_var(
+            "FACTORY_RESET_RESULT_FILE_PATH",
+            "testfiles/positive/omnect-os-initramfs-factory-reset-unknown-status.json",
+        );
+        crate::common::set_env_var("FACTORY_RESET_CONFIG_FILE_PATH", config_file_path);
+        crate::common::set_env_var("FACTORY_RESET_CUSTOM_CONFIG_DIR_PATH", custom_dir_path);
+
+        let mut fs_watcher = FsWatcher::new().expect("FsWatcher::new");
+        assert!(FactoryReset::new(&mut fs_watcher).is_ok());
     }
 
     #[tokio::test(flavor = "multi_thread")]
