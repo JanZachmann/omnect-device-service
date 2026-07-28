@@ -63,21 +63,28 @@ pub struct CustomConfig {
     paths: Vec<String>,
 }
 
+// u32 matches the serialization in omnect-os-init
 #[derive(Debug, Deserialize_repr, PartialEq, Serialize_repr)]
-#[repr(u8)]
+#[repr(u32)]
 pub enum FactoryResetStatus {
     ModeSupported = 0,
     ModeUnsupported = 1,
     BackupRestoreError = 2,
     ConfigurationError = 3,
+    Warning = 4,
+    // catch-all so a future status code doesn't fail parsing and ODS startup
+    #[serde(other)]
+    Unknown = u32::MAX,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 struct FactoryResetResult {
     status: FactoryResetStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     context: Option<String>,
-    error: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(default)]
     paths: Vec<String>,
 }
 
@@ -177,7 +184,7 @@ impl Feature for FactoryReset {
 }
 
 impl FactoryReset {
-    const FACTORY_RESET_VERSION: u8 = 3;
+    const FACTORY_RESET_VERSION: u8 = 4;
     const ID: &'static str = "factory_reset";
 
     pub fn new(fs_watcher: &mut FsWatcher) -> Result<Self> {
@@ -232,13 +239,21 @@ impl FactoryReset {
     fn factory_reset_result() -> Result<Option<FactoryResetResult>> {
         let omnect_os_initramfs_json: serde_json::Value = from_json_file(result_path!())?;
 
-        if omnect_os_initramfs_json["factory-reset"].is_null() {
+        if omnect_os_initramfs_json["factory_reset"].is_null() {
             debug!("factory reset: no result");
             return Ok(None);
         }
 
-        let result = serde_json::from_value(omnect_os_initramfs_json["factory-reset"].clone())
-            .context("failed to parse factory reset result from initramfs")?;
+        let result: FactoryResetResult =
+            serde_json::from_value(omnect_os_initramfs_json["factory_reset"].clone())
+                .context("failed to parse factory reset result from initramfs")?;
+
+        if result.status == FactoryResetStatus::Unknown {
+            warn!(
+                "factory reset result with unknown status: {:#}",
+                omnect_os_initramfs_json["factory_reset"]
+            );
+        }
 
         info!("factory reset result: {result:#?}");
 
@@ -332,7 +347,7 @@ mod tests {
             reported,
             FactoryResetResult {
                 status: FactoryResetStatus::ModeSupported,
-                error: "-".to_string(),
+                error: None,
                 context: None,
                 paths: vec![],
             }
@@ -405,10 +420,38 @@ mod tests {
             FactoryReset::factory_reset_result().unwrap().unwrap(),
             FactoryResetResult {
                 status: FactoryResetStatus::ModeSupported,
-                error: "-".to_string(),
+                error: None,
                 paths: vec![],
                 context: None,
             }
+        );
+
+        crate::common::set_env_var(
+            "FACTORY_RESET_RESULT_FILE_PATH",
+            "testfiles/positive/omnect-os-initramfs-factory-reset-warning.json",
+        );
+        assert_eq!(
+            FactoryReset::factory_reset_result()
+                .expect("parse warning result")
+                .expect("warning result present"),
+            FactoryResetResult {
+                status: FactoryResetStatus::Warning,
+                error: Some("partition needed a second mkfs".to_string()),
+                paths: vec!["/data/foo".to_string()],
+                context: Some("format data partition".to_string()),
+            }
+        );
+
+        crate::common::set_env_var(
+            "FACTORY_RESET_RESULT_FILE_PATH",
+            "testfiles/positive/omnect-os-initramfs-factory-reset-unknown-status.json",
+        );
+        assert_eq!(
+            FactoryReset::factory_reset_result()
+                .expect("parse unknown status result")
+                .expect("unknown status result present")
+                .status,
+            FactoryResetStatus::Unknown
         );
 
         crate::common::set_env_var(
