@@ -128,21 +128,13 @@ async fn collect_unit_health(
         .await
         .context("collect_unit_health: failed to list units")?
     {
-        if !unit.name.ends_with(".service") {
-            continue;
-        }
-
-        // NRestarts is only relevant for units that are not active
-        let n_restarts = if unit.active == ActiveState::Active {
-            0
+        // NRestarts only exists for services and only matters while not active;
+        // a transient per-unit D-Bus error (e.g. the unit vanished meanwhile)
+        // must not abort the validation, so it counts as 0
+        let n_restarts = if unit.name.ends_with(".service") && unit.active != ActiveState::Active {
+            service_n_restarts(connection, &unit).await.unwrap_or(0)
         } else {
-            systemd_zbus::ServiceProxy::builder(connection)
-                .path(unit.path.clone())?
-                .build()
-                .await?
-                .n_restarts()
-                .await
-                .unwrap_or(0)
+            0
         };
 
         units.push(UnitHealth {
@@ -153,6 +145,18 @@ async fn collect_unit_health(
     }
 
     Ok(units)
+}
+
+async fn service_n_restarts(
+    connection: &zbus::Connection,
+    unit: &systemd_zbus::Unit,
+) -> Result<u32> {
+    Ok(systemd_zbus::ServiceProxy::builder(connection)
+        .path(unit.path.clone())?
+        .build()
+        .await?
+        .n_restarts()
+        .await?)
 }
 
 #[cfg(feature = "mock")]
@@ -270,6 +274,15 @@ mod tests {
         assert_eq!(
             rate_system_health("degraded", &units, CRASH_LOOP_RESTART_THRESHOLD_DEFAULT),
             SystemHealth::Degraded(vec!["a.service".to_string(), "b.service".to_string()])
+        );
+    }
+
+    #[test]
+    fn degraded_lists_failed_non_service_units() {
+        let units = vec![unit("data.mount", ActiveState::Failed, 0)];
+        assert_eq!(
+            rate_system_health("degraded", &units, CRASH_LOOP_RESTART_THRESHOLD_DEFAULT),
+            SystemHealth::Degraded(vec!["data.mount".to_string()])
         );
     }
 
