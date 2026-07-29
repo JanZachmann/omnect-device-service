@@ -1,5 +1,5 @@
 #!/bin/bash
-# Wrapper for fw_setenv – blocks script-file mode.
+# Wrapper for fw_setenv – blocks options, especially script-file mode.
 set -efuo pipefail
 
 FW_SETENV=/usr/bin/fw_setenv
@@ -10,21 +10,13 @@ usage() {
     exit 1
 }
 
-die() {
-    echo "ERROR: $*" >&2
-    exit 1
-}
-
 [[ $# -ne 2 ]] && usage
 
 KEY="$1"
 VALUE="$2"
 
-# Block -s / --script anywhere in the value (as a word)
-for word in $KEY $VALUE; do
-    if [[ "$word" == "-s" || "$word" == "--script" || "$word" == -s=* || "$word" == --script=* ]]; then
-        die "Script-file mode is not allowed (flag: $word)"
-    fi
-done
-
-exec "$FW_SETENV" "$KEY" "$VALUE"
+# '--' ends option parsing, so key and value are always treated as data.
+# this blocks script mode and every other option, e.g. an attacker-chosen
+# config file, which a flag blocklist would miss (getopt accepts attached
+# values like -sFILE and abbreviations like --scr=FILE)
+exec "$FW_SETENV" -- "$KEY" "$VALUE"
