@@ -3,7 +3,7 @@ pub mod unit;
 pub mod watchdog;
 
 use anyhow::{Context, Result};
-use log::{error, info};
+use log::{error, info, warn};
 use sd_notify::NotifyState;
 use std::sync::Once;
 use systemd_zbus::{ActiveState, ManagerProxy};
@@ -104,6 +104,21 @@ pub async fn wait_for_system_healthy(deadline: std::time::Duration) -> Result<()
                     return Ok(());
                 }
             }
+            // a service that restarted may still reach the crash loop
+            // threshold, which takes threshold x RestartSec to become visible,
+            // so health must not be confirmed yet. without that proof by the
+            // end of the deadline the system counts as healthy: a rollback
+            // needs evidence
+            SystemHealth::Restarting(units) => {
+                healthy_polls = 0;
+                if start.elapsed() >= deadline {
+                    warn!(
+                        "deadline reached while units were still restarting: {}",
+                        units.join(" ")
+                    );
+                    return Ok(());
+                }
+            }
             // the deadline must not cut short a confirmation in progress
             SystemHealth::Starting(_) => {
                 healthy_polls = 0;
@@ -193,6 +208,7 @@ pub(crate) struct UnitHealth {
 enum SystemHealth {
     Healthy,
     Starting(String),
+    Restarting(Vec<String>),
     Degraded(Vec<String>),
     CrashLooping(Vec<String>),
 }
@@ -205,6 +221,18 @@ fn crash_looping_units(units: &[UnitHealth], threshold: u32) -> Vec<String> {
         .collect();
     looping.sort();
     looping
+}
+
+// units that restarted and are not active right now, so they can still reach
+// the crash loop threshold
+fn restarting_units(units: &[UnitHealth], threshold: u32) -> Vec<String> {
+    let mut restarting: Vec<String> = units
+        .iter()
+        .filter(|u| (1..threshold).contains(&u.n_restarts) && u.active != ActiveState::Active)
+        .map(|u| u.name.clone())
+        .collect();
+    restarting.sort();
+    restarting
 }
 
 fn rate_system_health(system_state: &str, units: &[UnitHealth], threshold: u32) -> SystemHealth {
@@ -222,6 +250,10 @@ fn rate_system_health(system_state: &str, units: &[UnitHealth], threshold: u32) 
                     .collect();
                 failed.sort();
                 return SystemHealth::Degraded(failed);
+            }
+            let restarting = restarting_units(units, threshold);
+            if !restarting.is_empty() {
+                return SystemHealth::Restarting(restarting);
             }
             SystemHealth::Healthy
         }
@@ -288,13 +320,27 @@ mod tests {
         );
     }
 
+    // the threshold takes threshold x RestartSec to be reached, which is longer
+    // than the confirmation polls take, so health must not be confirmed while a
+    // restart is pending
     #[test]
-    fn single_auto_restart_below_threshold_is_not_a_crash_loop() {
-        let units = vec![unit(
-            "loop.service",
-            ActiveState::Activating,
-            CRASH_LOOP_RESTART_THRESHOLD_DEFAULT - 1,
-        )];
+    fn restart_below_threshold_is_not_yet_healthy() {
+        for n_restarts in 1..CRASH_LOOP_RESTART_THRESHOLD_DEFAULT {
+            let units = vec![unit("loop.service", ActiveState::Activating, n_restarts)];
+            assert_eq!(
+                rate_system_health("running", &units, CRASH_LOOP_RESTART_THRESHOLD_DEFAULT),
+                SystemHealth::Restarting(vec!["loop.service".to_string()]),
+                "{n_restarts} restarts should keep the check polling"
+            );
+        }
+    }
+
+    #[test]
+    fn system_without_restarts_is_healthy() {
+        let units = vec![
+            unit("a.service", ActiveState::Active, 0),
+            unit("b.timer", ActiveState::Inactive, 0),
+        ];
         assert_eq!(
             rate_system_health("running", &units, CRASH_LOOP_RESTART_THRESHOLD_DEFAULT),
             SystemHealth::Healthy

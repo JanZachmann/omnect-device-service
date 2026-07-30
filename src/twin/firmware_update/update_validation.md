@@ -48,6 +48,9 @@ The following checks must be passed in order to successfully validate an update:
 - the system state is polled; if it does not become healthy within the
   remaining validation time minus a safety margin, validation fails with the
   last observed state
+- a service that restarted but is not active yet keeps the check polling, since
+  it can still reach the crash loop threshold; without that proof by the end of
+  the deadline the system counts as healthy, because a rollback needs evidence
 - on a failed validation the reboot reason `swupdate-validation-failed` is
   logged with the cause as extra info: the failed units, the crash-looping
   units, or the last system state

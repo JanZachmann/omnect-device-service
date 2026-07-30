@@ -8,7 +8,12 @@ use anyhow::{Context, Result};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{env, fs, path::Path, sync::Arc, time::SystemTime};
+use std::{
+    env, fs,
+    path::Path,
+    sync::Arc,
+    time::{Instant, SystemTime},
+};
 use tokio::{
     sync::{RwLock, oneshot},
     time::{Duration, timeout},
@@ -153,12 +158,10 @@ impl UpdateValidation {
         Ok(())
     }
 
-    async fn validate(local_update: bool, deadline_timestamp: SystemTime) -> Result<()> {
+    async fn validate(local_update: bool, deadline: Instant) -> Result<()> {
         debug!("validate update");
 
-        let remaining = deadline_timestamp
-            .duration_since(SystemTime::now())
-            .unwrap_or_default();
+        let remaining = deadline.saturating_duration_since(Instant::now());
         systemd::wait_for_system_healthy(health_deadline(remaining)).await?;
 
         info!("system is healthy");
@@ -226,14 +229,16 @@ impl UpdateValidation {
 
     fn start_timeout(&mut self) -> Result<()> {
         let (tx_cancel_timer, rx_cancel_timer) = oneshot::channel();
-        let deadline_timestamp = self
+        let remaining_time = self
             .params
             .clone()
             .context("validation params missing")?
-            .deadline_timestamp;
-        let remaining_time = deadline_timestamp
+            .deadline_timestamp
             .duration_since(SystemTime::now())
             .context("failed to build remaining timeout secs")?;
+        // the timeout below is monotonic, so the health deadline must be too:
+        // a clock step during boot must not shorten it
+        let deadline = Instant::now() + remaining_time;
         let status = Arc::clone(&self.status);
         let local_update = self.local_update;
         self.tx_cancel_timer = Some(tx_cancel_timer);
@@ -247,7 +252,7 @@ impl UpdateValidation {
                     return Ok(());
                 }
 
-                Self::validate(local_update, deadline_timestamp).await?;
+                Self::validate(local_update, deadline).await?;
                 Self::finalize(status).await
             };
 
