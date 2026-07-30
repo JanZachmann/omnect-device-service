@@ -3,14 +3,13 @@
 
 . healthchecklib.sh
 
-# prints crash-looping services to stdout
+# prints crash-looping services to stdout; returns 1 if they cannot be determined
 function find_crash_loops() {
     local unit props active sub found="" units
 
     units=$(systemctl list-units --all --type=service --no-legend --plain | awk '{print $1}')
     if [ -z "${units}" ]; then
-        echo " failed to list services"
-        return
+        return 1
     fi
 
     for unit in ${units}; do
@@ -32,7 +31,7 @@ function find_crash_loops() {
 function do_check() {
     local found rating=0
 
-    found=$(find_crash_loops)
+    found=$(find_crash_loops) || rating=2
     [ -z "${found}" ] || rating=2
     print_rating ${rating} crash_loop "$ME"
     do_rate ${rating}
@@ -40,11 +39,12 @@ function do_check() {
 }
 
 function do_get_infos() {
-    local found rating=0
+    local found rating=0 error=""
 
-    found=$(find_crash_loops)
+    found=$(find_crash_loops) || { rating=2; error="failed to list services"; }
     [ -z "${found}" ] || rating=2
     print_info_header "${ME}" "${rating}"
+    [ -z "${error}" ] || echo "${error}"
     [ -z "${found}" ] || echo "crash-looping services:${found}"
     return ${rating}
 }

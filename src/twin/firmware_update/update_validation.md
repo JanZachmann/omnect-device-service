@@ -11,7 +11,7 @@ The following checks must be passed in order to successfully validate an update:
 - omnect-device-service.service status is in state [running](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html#status%20PATTERN%E2%80%A6%7CPID%E2%80%A6%5D)
 - system is in state [running](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html#is-system-running) and no service is in a crash loop
   (repeatedly restarting without staying active); a `degraded` system
-  state fails the validation immediately
+  state fails the validation
 - in case local update is **NOT** [configured](#local-validation)
   - adu-agent could be started successfully
   - omnect-device-service is connected to iothub (successfully provisioned)
@@ -45,12 +45,16 @@ The following checks must be passed in order to successfully validate an update:
 
 #### System health deadline
 
-- the system state is polled; if it does not become healthy within the
-  remaining validation time minus a safety margin, validation fails with the
-  last observed state
-- a service that restarted but is not active yet keeps the check polling, since
-  it can still reach the crash loop threshold; without that proof by the end of
-  the deadline the system counts as healthy, because a rollback needs evidence
+- the system state is polled until the deadline, which is the remaining
+  validation time minus a safety margin; healthy and unhealthy both need several
+  consecutive observations, so a single poll landing in a restart window decides
+  nothing
+- a service in a restart cycle below the crash loop threshold keeps the check
+  polling, since it can still reach the threshold
+- what the deadline means depends on the last observation:
+  - system still starting, or degraded: validation fails
+  - restart pending below the threshold, or healthy: validation succeeds, because
+    a rollback needs evidence
 - on a failed validation the reboot reason `swupdate-validation-failed` is
   logged with the cause as extra info: the failed units, the crash-looping
   units, or the last system state
@@ -63,7 +67,8 @@ The following checks must be passed in order to successfully validate an update:
 ### Crash loop detection
 
 - configurable via environment variable `CRASH_LOOP_RESTART_THRESHOLD` (default 3, must be >= 1)
-- a unit counts as crash-looping after this many restarts while not active
+- a unit counts as crash-looping after this many restarts while it is still in a
+  restart cycle
 
 ### Local validation
 
