@@ -3,11 +3,9 @@
 
 . healthchecklib.sh
 
-CRASH_LOOP_RESTART_THRESHOLD=3
-
 # prints crash-looping services to stdout
 function find_crash_loops() {
-    local unit props active sub nrestarts found="" units
+    local unit props active sub found="" units
 
     units=$(systemctl list-units --all --type=service --no-legend --plain | awk '{print $1}')
     if [ -z "${units}" ]; then
@@ -16,18 +14,15 @@ function find_crash_loops() {
     fi
 
     for unit in ${units}; do
-        props=$(systemctl show "${unit}" -p ActiveState,SubState,NRestarts 2>/dev/null) || continue
+        props=$(systemctl show "${unit}" -p ActiveState,SubState 2>/dev/null) || continue
         active=$(echo "${props}" | sed -n 's/^ActiveState=//p')
         sub=$(echo "${props}" | sed -n 's/^SubState=//p')
-        nrestarts=$(echo "${props}" | sed -n 's/^NRestarts=//p')
 
-        # the point-in-time auto-restart branch is deliberately more sensitive
-        # than the update validation rule in omnect-device-service: a red
-        # health rating is cheap, a validation rollback is not
+        # only a live loop is rated red: NRestarts has no time window and keeps
+        # counting occasional restarts, and a unit that gave up restarting shows
+        # up as a failed unit in the system-running check
         if [ "${active}" = "activating" ] && [ "${sub}" = "auto-restart" ]; then
             found="${found} ${unit}(auto-restart)"
-        elif [ -n "${nrestarts}" ] && [ "${nrestarts}" -ge "${CRASH_LOOP_RESTART_THRESHOLD}" ] && [ "${active}" != "active" ]; then
-            found="${found} ${unit}(NRestarts=${nrestarts})"
         fi
     done
 

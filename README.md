@@ -927,8 +927,8 @@ Independent of this endpoint, the [healthcheck](healthcheck/) directory contains
 scripts that check specific system functions and rate each one green, yellow,
 or red. Among them:
 
-- `crash_loop`: rates a service red when it is stuck in a crash loop (in
-  auto-restart, or 3+ restarts while not active)
+- `crash_loop`: rates a service red while it is stuck in a crash loop (in
+  auto-restart)
 
 ### Status updates
 

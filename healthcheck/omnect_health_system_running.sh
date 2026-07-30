@@ -19,9 +19,10 @@ function do_get_infos() {
     local ret
     checkit
     ret=$?
-    # TODO/FIXME: how to find and show reasons for this state?
     print_info_header "${ME}" "$ret"
-    [ $ret = 0 ] || { systemctl is-system-running; systemctl --failed; }
+    # a state other than "running" comes from failed units or from jobs that
+    # are still pending
+    [ $ret = 0 ] || { systemctl is-system-running; systemctl --failed; systemctl list-jobs; }
     return $ret
 }
 
