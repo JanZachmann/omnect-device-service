@@ -62,7 +62,7 @@ The following checks must be passed in order to successfully validate an update:
 
 ### Crash loop detection
 
-- configurable via environment variable `CRASH_LOOP_RESTART_THRESHOLD` (default 3)
+- configurable via environment variable `CRASH_LOOP_RESTART_THRESHOLD` (default 3, must be >= 1)
 - a unit counts as crash-looping after this many restarts while not active
 
 ### Local validation

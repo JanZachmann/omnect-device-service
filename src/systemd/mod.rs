@@ -188,10 +188,11 @@ fn crash_loop_restart_threshold() -> u32 {
     let mut threshold = CRASH_LOOP_RESTART_THRESHOLD_DEFAULT;
     if let Ok(value) = std::env::var("CRASH_LOOP_RESTART_THRESHOLD") {
         match value.parse::<u32>() {
-            Ok(value) => threshold = value,
-            _ => error!(
+            // 0 would rate every non-active service a crash loop
+            Ok(0) | Err(_) => error!(
                 "ignore invalid crash loop restart threshold {value} and use default {threshold}"
             ),
+            Ok(value) => threshold = value,
         };
     }
     threshold
@@ -367,6 +368,18 @@ mod tests {
             rate_system_health("running", &units, 1),
             SystemHealth::CrashLooping(vec!["loop.service".to_string()])
         );
+    }
+
+    #[test]
+    fn zero_threshold_falls_back_to_default() {
+        crate::common::set_env_var("CRASH_LOOP_RESTART_THRESHOLD", "0");
+        assert_eq!(
+            crash_loop_restart_threshold(),
+            CRASH_LOOP_RESTART_THRESHOLD_DEFAULT
+        );
+        crate::common::set_env_var("CRASH_LOOP_RESTART_THRESHOLD", "5");
+        assert_eq!(crash_loop_restart_threshold(), 5);
+        crate::common::remove_env_var("CRASH_LOOP_RESTART_THRESHOLD");
     }
 
     #[test]
