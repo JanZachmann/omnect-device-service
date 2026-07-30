@@ -104,13 +104,15 @@ pub async fn wait_for_system_healthy(deadline: std::time::Duration) -> Result<()
                     return Ok(());
                 }
             }
-            SystemHealth::Starting(_) => healthy_polls = 0,
+            // the deadline must not cut short a confirmation in progress
+            SystemHealth::Starting(_) => {
+                healthy_polls = 0;
+                if start.elapsed() >= deadline {
+                    anyhow::bail!("system not healthy within deadline, last state: {state}");
+                }
+            }
             SystemHealth::Degraded(units) => anyhow::bail!(degraded_extra_info(&units)),
             SystemHealth::CrashLooping(units) => anyhow::bail!(crash_loop_extra_info(&units)),
-        }
-
-        if start.elapsed() >= deadline {
-            anyhow::bail!("system not healthy within deadline, last state: {state}");
         }
 
         tokio::time::sleep(SYSTEM_HEALTHY_POLL_INTERVAL).await;

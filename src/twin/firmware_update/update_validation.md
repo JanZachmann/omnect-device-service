@@ -46,8 +46,8 @@ The following checks must be passed in order to successfully validate an update:
 #### System health deadline
 
 - the system state is polled; if it does not become healthy within the
-  internal timeout minus a safety margin, validation fails with the last
-  observed state
+  remaining validation time minus a safety margin, validation fails with the
+  last observed state
 - on a failed validation the reboot reason `swupdate-validation-failed` is
   logged with the cause as extra info: the failed units, the crash-looping
   units, or the last system state

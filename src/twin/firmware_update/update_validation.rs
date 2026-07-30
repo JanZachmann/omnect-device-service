@@ -24,7 +24,13 @@ static UPDATE_VALIDATION_FAILED_FILE: &str =
     "/run/omnect-device-service/omnect_validate_update_failed";
 static UPDATE_VALIDATION_TIMEOUT_IN_SECS_DEFAULT: u64 = 300;
 static SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS: u64 = 30;
-static SYSTEM_HEALTHY_DEADLINE_MIN_IN_SECS: u64 = 60;
+
+// validation only starts after authentication, so the health check gets the
+// time that is actually left: the margin keeps its descriptive error ahead of
+// the generic validation timeout, which decides the reboot reason
+fn health_deadline(remaining: Duration) -> Duration {
+    remaining.saturating_sub(Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS))
+}
 
 #[derive(Clone, Debug, Default, Serialize)]
 enum UpdateValidationStatus {
@@ -147,15 +153,13 @@ impl UpdateValidation {
         Ok(())
     }
 
-    async fn validate(local_update: bool) -> Result<()> {
+    async fn validate(local_update: bool, deadline_timestamp: SystemTime) -> Result<()> {
         debug!("validate update");
 
-        // the margin keeps the descriptive error ahead of the generic
-        // validation timeout so it ends up in the reboot reason
-        let deadline = Self::timeout()
-            .saturating_sub(Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS))
-            .max(Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MIN_IN_SECS));
-        systemd::wait_for_system_healthy(deadline).await?;
+        let remaining = deadline_timestamp
+            .duration_since(SystemTime::now())
+            .unwrap_or_default();
+        systemd::wait_for_system_healthy(health_deadline(remaining)).await?;
 
         info!("system is healthy");
 
@@ -222,11 +226,12 @@ impl UpdateValidation {
 
     fn start_timeout(&mut self) -> Result<()> {
         let (tx_cancel_timer, rx_cancel_timer) = oneshot::channel();
-        let remaining_time = self
+        let deadline_timestamp = self
             .params
             .clone()
             .context("validation params missing")?
-            .deadline_timestamp
+            .deadline_timestamp;
+        let remaining_time = deadline_timestamp
             .duration_since(SystemTime::now())
             .context("failed to build remaining timeout secs")?;
         let status = Arc::clone(&self.status);
@@ -242,7 +247,7 @@ impl UpdateValidation {
                     return Ok(());
                 }
 
-                Self::validate(local_update).await?;
+                Self::validate(local_update, deadline_timestamp).await?;
                 Self::finalize(status).await
             };
 
@@ -304,6 +309,37 @@ mod tests {
     use super::*;
 
     use crate::bootloader_env::TEST_LOCK as BOOTARGS_TEST_LOCK;
+
+    #[test]
+    fn health_deadline_keeps_margin_to_validation_timeout() {
+        let remaining = Duration::from_secs(UPDATE_VALIDATION_TIMEOUT_IN_SECS_DEFAULT);
+        assert_eq!(
+            health_deadline(remaining),
+            remaining - Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS)
+        );
+    }
+
+    #[test]
+    fn health_deadline_without_slack_is_zero() {
+        assert_eq!(
+            health_deadline(Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS)),
+            Duration::ZERO
+        );
+        assert_eq!(health_deadline(Duration::ZERO), Duration::ZERO);
+    }
+
+    // a low configured timeout must not produce a deadline beyond it, else the
+    // generic timeout wins the race and the reboot reason loses the cause
+    #[test]
+    fn health_deadline_never_exceeds_remaining_time() {
+        for secs in [1, 10, SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS, 90, 1200] {
+            let remaining = Duration::from_secs(secs);
+            assert!(
+                health_deadline(remaining) < remaining || remaining.is_zero(),
+                "deadline for {secs}s remaining is not shorter than the remaining time"
+            );
+        }
+    }
 
     #[test]
     fn finalize_bootargs_noargs_sentinel_unsets_both_keys() {
