@@ -7,7 +7,7 @@
 #  - actual check scripts aiming at specific system functions
 #  - a configuration file defining which check scripts to invoke and how
 #
-# Names of the actual check scripts are all prefixed with "omnect_health_"
+# Names of the actual check scripts are all prefixed with "omnect_health__"
 # by convention, the main script relies on that when evaluating the
 # configuration file.
 #
@@ -27,7 +27,7 @@
 #  - "name": the name of the check
 #            -> for informational output by main script
 #  - "type": this defines the check script to be called
-#            -> "omnect_health_" + "type" + ".sh"
+#            -> "omnect_health__" + "type" + ".sh"
 #  - "extra-args": optional, extra arguments to be additionally given
 #
 # The example below shows the first configuration used for health check.

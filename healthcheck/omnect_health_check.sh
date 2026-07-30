@@ -53,7 +53,7 @@ function do__cmd() {
 	[ "$type" ] \
 	    || { warn "entry $i in \"$cfgfile\" is missing \"type\" attribute"; continue; }
 
-	check="/usr/sbin/omnect_health_${type}.sh"
+	check="/usr/sbin/omnect_health__${type}.sh"
 	[ -x "$check" ] \
 	    || { warn "check \"$check\" for type \"$type\" (entry $i in \"$cfgfile\") cannot be called"; continue; }
 

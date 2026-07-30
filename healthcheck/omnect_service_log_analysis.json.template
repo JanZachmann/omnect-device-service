@@ -1,5 +1,5 @@
 # This file is an example configuration how services are checked by the omnect
-# health check script omnect_health_services.sh.
+# health check script omnect_health__services.sh.
 #
 # The base idea is to record whenever a service stops/(re-)starts in service
 # specific log files which can then be examined by a script to yield a health
