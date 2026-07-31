@@ -415,7 +415,8 @@ impl HealthTally {
         }
 
         // the count decides that the system is unhealthy, so the reported cause
-        // is the one it counted most often
+        // is the one it counted most often; an equal count reports the crash
+        // loop, the more specific of the two
         let cause = if self.crash_looping.polls >= self.degraded.polls {
             &self.crash_looping
         } else {

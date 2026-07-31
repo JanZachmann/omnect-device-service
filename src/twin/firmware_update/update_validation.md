@@ -52,7 +52,8 @@ The following checks must be passed in order to successfully validate an update:
   polling, since it can still reach the threshold
 - before the deadline a verdict needs consecutive observations of one kind
 - a failed poll is no observation: the wait keeps polling and only gives up when
-  the same number of polls fails in a row
+  the same number of polls fails in a row. If the deadline comes first and no poll
+  ever succeeded, validation fails without a system state to report
 - at the deadline all unhealthy observations of the wait count, consecutive or
   not: validation fails once they reach the same number, or if no poll was
   healthy at all. The reported cause is the one with the most observations
@@ -65,7 +66,7 @@ The following checks must be passed in order to successfully validate an update:
   since no poll was healthy yet a single unhealthy one fails the validation
 - on a failed validation the reboot reason `swupdate-validation-failed` is
   logged with the cause as extra info: the failed units, the crash-looping
-  units, or the last system state
+  units, the last system state, or why the polls failed
 
 #### Global timeout
 
