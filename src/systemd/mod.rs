@@ -367,40 +367,61 @@ enum SystemHealth {
     CrashLooping(Vec<String>),
 }
 
+#[derive(Default)]
+struct CauseTally {
+    polls: u32,
+    last_info: Option<String>,
+}
+
+impl CauseTally {
+    fn observe(&mut self, info: String) {
+        self.polls += 1;
+        self.last_info = Some(info);
+    }
+}
+
 // all observations of a wait; only healthy and unhealthy ones carry a verdict,
 // a starting or restarting system says nothing yet
 #[derive(Default)]
 struct HealthTally {
     healthy_polls: u32,
-    unhealthy_polls: u32,
-    last_unhealthy_info: Option<String>,
+    degraded: CauseTally,
+    crash_looping: CauseTally,
 }
 
 impl HealthTally {
     fn observe(&mut self, health: &SystemHealth) {
         match health {
             SystemHealth::Healthy => self.healthy_polls += 1,
-            SystemHealth::Degraded(units) => self.observe_unhealthy(degraded_extra_info(units)),
+            SystemHealth::Degraded(units) => self.degraded.observe(degraded_extra_info(units)),
             SystemHealth::CrashLooping(units) => {
-                self.observe_unhealthy(crash_loop_extra_info(units))
+                self.crash_looping.observe(crash_loop_extra_info(units))
             }
             SystemHealth::Restarting(_) | SystemHealth::Starting(_) => {}
         }
     }
 
-    fn observe_unhealthy(&mut self, info: String) {
-        self.unhealthy_polls += 1;
-        self.last_unhealthy_info = Some(info);
+    fn unhealthy_polls(&self) -> u32 {
+        self.degraded.polls + self.crash_looping.polls
     }
 
     // an unhealthy verdict needs as many observations as a confirmed one, only
     // not consecutive; without a single healthy observation there is nothing
     // that speaks for the update, so one unhealthy observation is enough
     fn unhealthy_verdict(&self) -> Option<&str> {
-        if self.unhealthy_polls >= HEALTH_CONFIRMATION_POLLS || self.healthy_polls == 0 {
-            return self.last_unhealthy_info.as_deref();
+        let unhealthy = self.unhealthy_polls();
+        if unhealthy == 0 || (unhealthy < HEALTH_CONFIRMATION_POLLS && self.healthy_polls > 0) {
+            return None;
         }
-        None
+
+        // the count decides that the system is unhealthy, so the reported cause
+        // is the one it counted most often
+        let cause = if self.crash_looping.polls >= self.degraded.polls {
+            &self.crash_looping
+        } else {
+            &self.degraded
+        };
+        cause.last_info.as_deref()
     }
 }
 
@@ -982,6 +1003,21 @@ mod tests {
             );
             observations.push(last_health);
         }
+    }
+
+    // the count and the reported cause must agree: what was seen most often
+    #[test]
+    fn the_cause_seen_most_often_is_reported() {
+        let observations = [
+            SystemHealth::Healthy,
+            degraded(),
+            SystemHealth::CrashLooping(names(&["loop.service"])),
+            degraded(),
+        ];
+        assert_eq!(
+            tally(&observations).unhealthy_verdict(),
+            Some(degraded_extra_info(&names(&["a.service"])).as_str())
+        );
     }
 
     // without a healthy observation there is nothing that speaks for the update
