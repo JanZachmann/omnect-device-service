@@ -20,8 +20,14 @@ function find_crash_loops() {
         # only a live loop is rated red: NRestarts has no time window and keeps
         # counting occasional restarts, and a unit that gave up restarting shows
         # up as a failed unit in the system-running check
-        if [ "${active}" = "activating" ] && [ "${sub}" = "auto-restart" ]; then
-            found="${found} ${unit}(auto-restart)"
+        if [ "${active}" = "activating" ]; then
+            case "${sub}" in
+                # 'auto-restart-queued' is the same pending restart with the
+                # restart job already queued
+                auto-restart|auto-restart-queued)
+                    found="${found} ${unit}(${sub})"
+                    ;;
+            esac
         fi
     done
 
