@@ -5,17 +5,22 @@ pub mod watchdog;
 use anyhow::{Context, Result};
 use log::{error, info, warn};
 use sd_notify::NotifyState;
+use serde::Deserialize;
 use std::{
     future::Future,
     mem::Discriminant,
     sync::Once,
     time::{Duration, Instant},
 };
-use systemd_zbus::{ActiveState, ManagerProxy, SubState};
-use zbus::proxy::CacheProperties;
+use zbus::{proxy::CacheProperties, zvariant::OwnedObjectPath, zvariant::Type};
 
 const SYSTEM_STATE_RUNNING: &str = "running";
 const SYSTEM_STATE_DEGRADED: &str = "degraded";
+const ACTIVE_STATE_ACTIVATING: &str = "activating";
+const ACTIVE_STATE_FAILED: &str = "failed";
+const SUB_STATE_AUTO_RESTART: &str = "auto-restart";
+// the same pending restart with the restart job already queued
+const SUB_STATE_AUTO_RESTART_QUEUED: &str = "auto-restart-queued";
 const SYSTEM_HEALTHY_POLL_INTERVAL: Duration = Duration::from_secs(2);
 // a single poll can land in a restart window in either direction, so a healthy
 // and an unhealthy verdict both need this many observations
@@ -84,10 +89,41 @@ pub async fn reboot(reason: &str, extra_info: &str) -> Result<()> {
     Ok(())
 }
 
+// ListUnits as returned by systemd, with the states as strings: the typed
+// bindings reject a state they do not know, which fails the whole reply, so a
+// state a newer systemd adds would break the update validation on every device.
+// All fields have to be there to match the signature, only some are read.
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Type)]
+struct ListedUnit {
+    name: String,
+    description: String,
+    load_state: String,
+    active_state: String,
+    sub_state: String,
+    followed_unit: String,
+    path: OwnedObjectPath,
+    queued_job: u32,
+    job_type: String,
+    job_path: OwnedObjectPath,
+}
+
+#[zbus::proxy(
+    interface = "org.freedesktop.systemd1.Manager",
+    default_service = "org.freedesktop.systemd1",
+    default_path = "/org/freedesktop/systemd1"
+)]
+trait SystemdManager {
+    #[zbus(property)]
+    fn system_state(&self) -> zbus::Result<String>;
+
+    fn list_units(&self) -> zbus::Result<Vec<ListedUnit>>;
+}
+
 pub async fn wait_for_system_healthy(deadline: Duration) -> Result<()> {
     let connection = system_connection().await?;
     // we poll SystemState explicitly; the property cache must not hide changes
-    let manager = ManagerProxy::builder(&connection)
+    let manager = SystemdManagerProxy::builder(&connection)
         .uncached_properties(&["SystemState"])
         .build()
         .await
@@ -206,7 +242,7 @@ fn deadline_verdict(tally: &HealthTally, last_health: Option<&SystemHealth>) -> 
 
 async fn poll_system_health(
     connection: &zbus::Connection,
-    manager: &ManagerProxy<'_>,
+    manager: &SystemdManagerProxy<'_>,
 ) -> Result<(SystemState, Vec<UnitHealth>)> {
     let state = SystemState::parse(
         &manager
@@ -226,7 +262,7 @@ async fn poll_system_health(
 
 async fn collect_unit_health(
     connection: &zbus::Connection,
-    manager: &ManagerProxy<'_>,
+    manager: &SystemdManagerProxy<'_>,
 ) -> Result<Vec<UnitHealth>> {
     let mut units = vec![];
 
@@ -237,16 +273,17 @@ async fn collect_unit_health(
     {
         // a transient per-unit D-Bus error must not abort the validation, so it
         // counts as 0
-        let n_restarts =
-            if unit.name.ends_with(".service") && in_restart_cycle(&unit.active, &unit.sub_state) {
-                service_n_restarts(connection, &unit).await.unwrap_or(0)
-            } else {
-                0
-            };
+        let n_restarts = if unit.name.ends_with(".service")
+            && in_restart_cycle(&unit.active_state, &unit.sub_state)
+        {
+            service_n_restarts(connection, &unit).await.unwrap_or(0)
+        } else {
+            0
+        };
 
         units.push(UnitHealth {
             name: unit.name,
-            active: unit.active,
+            active_state: unit.active_state,
             sub_state: unit.sub_state,
             n_restarts,
         });
@@ -255,10 +292,7 @@ async fn collect_unit_health(
     Ok(units)
 }
 
-async fn service_n_restarts(
-    connection: &zbus::Connection,
-    unit: &systemd_zbus::Unit,
-) -> Result<u32> {
+async fn service_n_restarts(connection: &zbus::Connection, unit: &ListedUnit) -> Result<u32> {
     Ok(systemd_zbus::ServiceProxy::builder(connection)
         .path(unit.path.clone())?
         // a single read per poll: the default cache would subscribe to
@@ -293,8 +327,8 @@ fn crash_loop_restart_threshold() -> u32 {
 #[derive(Debug, Clone, PartialEq)]
 struct UnitHealth {
     name: String,
-    active: ActiveState,
-    sub_state: SubState,
+    active_state: String,
+    sub_state: String,
     n_restarts: u32,
 }
 
@@ -365,18 +399,18 @@ impl HealthTally {
 // systemd parks a unit in the auto-restart sub state between a failed start and
 // the next attempt, so only there is a restart pending; a normal start, and a
 // unit that recovered or gave up, is not
-fn in_restart_cycle(active: &ActiveState, sub_state: &SubState) -> bool {
-    *active == ActiveState::Activating
+fn in_restart_cycle(active_state: &str, sub_state: &str) -> bool {
+    active_state == ACTIVE_STATE_ACTIVATING
         && matches!(
             sub_state,
-            SubState::AutoRestart | SubState::AutoRestartQueued
+            SUB_STATE_AUTO_RESTART | SUB_STATE_AUTO_RESTART_QUEUED
         )
 }
 
 fn restart_cycle_units(units: &[UnitHealth], matches: impl Fn(u32) -> bool) -> Vec<String> {
     let mut names: Vec<String> = units
         .iter()
-        .filter(|u| in_restart_cycle(&u.active, &u.sub_state) && matches(u.n_restarts))
+        .filter(|u| in_restart_cycle(&u.active_state, &u.sub_state) && matches(u.n_restarts))
         .map(|u| u.name.clone())
         .collect();
     names.sort();
@@ -394,7 +428,7 @@ fn restarting_units(units: &[UnitHealth], threshold: u32) -> Vec<String> {
 fn failed_units(units: &[UnitHealth]) -> Vec<String> {
     let mut failed: Vec<String> = units
         .iter()
-        .filter(|u| u.active == ActiveState::Failed)
+        .filter(|u| u.active_state == ACTIVE_STATE_FAILED)
         .map(|u| u.name.clone())
         .collect();
     failed.sort();
@@ -456,26 +490,25 @@ mod tests {
 
     // the sub state is only read for the restart cycle, so it follows the active
     // state here; a unit in a restart cycle comes from restart_cycle_unit()
-    fn unit(name: &str, active: ActiveState, n_restarts: u32) -> UnitHealth {
-        let sub_state = match active {
-            ActiveState::Active => SubState::Running,
-            ActiveState::Activating => SubState::Start,
-            ActiveState::Failed => SubState::Failed,
-            _ => SubState::Dead,
+    fn unit(name: &str, active_state: &str, n_restarts: u32) -> UnitHealth {
+        let sub_state = match active_state {
+            "active" => "running",
+            ACTIVE_STATE_ACTIVATING => "start",
+            other => other,
         };
         UnitHealth {
             name: name.to_string(),
-            active,
-            sub_state,
+            active_state: active_state.to_string(),
+            sub_state: sub_state.to_string(),
             n_restarts,
         }
     }
 
-    fn restart_cycle_unit(name: &str, sub_state: SubState, n_restarts: u32) -> UnitHealth {
+    fn restart_cycle_unit(name: &str, sub_state: &str, n_restarts: u32) -> UnitHealth {
         UnitHealth {
             name: name.to_string(),
-            active: ActiveState::Activating,
-            sub_state,
+            active_state: ACTIVE_STATE_ACTIVATING.to_string(),
+            sub_state: sub_state.to_string(),
             n_restarts,
         }
     }
@@ -542,16 +575,13 @@ mod tests {
     }
 
     fn healthy_poll() -> ScriptedPoll {
-        Ok((
-            SystemState::Running,
-            vec![unit("a.service", ActiveState::Active, 0)],
-        ))
+        Ok((SystemState::Running, vec![unit("a.service", "active", 0)]))
     }
 
     fn degraded_poll() -> ScriptedPoll {
         Ok((
             SystemState::Degraded,
-            vec![unit("a.service", ActiveState::Failed, 0)],
+            vec![unit("a.service", ACTIVE_STATE_FAILED, 0)],
         ))
     }
 
@@ -560,7 +590,7 @@ mod tests {
             SystemState::Running,
             vec![restart_cycle_unit(
                 "loop.service",
-                SubState::AutoRestart,
+                SUB_STATE_AUTO_RESTART,
                 CRASH_LOOP_RESTART_THRESHOLD_DEFAULT,
             )],
         ))
@@ -569,7 +599,11 @@ mod tests {
     fn restarting_poll() -> ScriptedPoll {
         Ok((
             SystemState::Running,
-            vec![restart_cycle_unit("loop.service", SubState::AutoRestart, 1)],
+            vec![restart_cycle_unit(
+                "loop.service",
+                SUB_STATE_AUTO_RESTART,
+                1,
+            )],
         ))
     }
 
@@ -577,9 +611,31 @@ mod tests {
         Err(anyhow::anyhow!(POLL_ERROR))
     }
 
+    // the reply is only deserializable if the struct matches what ListUnits
+    // returns: a(ssssssouso)
+    #[test]
+    fn listed_unit_matches_the_list_units_signature() {
+        assert_eq!(ListedUnit::SIGNATURE.to_string(), "(ssssssouso)");
+    }
+
+    // a state this check does not rate must stay uninteresting instead of
+    // failing the poll, which is why the states are read as strings
+    #[test]
+    fn an_unrated_state_is_healthy() {
+        let units = vec![unit("a.service", "refreshing", 5)];
+        assert_eq!(
+            rate_system_health(
+                &SystemState::Running,
+                &units,
+                CRASH_LOOP_RESTART_THRESHOLD_DEFAULT
+            ),
+            SystemHealth::Healthy
+        );
+    }
+
     #[test]
     fn healthy_when_running_without_crash_loops() {
-        let units = vec![unit("a.service", ActiveState::Active, 0)];
+        let units = vec![unit("a.service", "active", 0)];
         assert_eq!(
             rate_system_health(
                 &SystemState::Running,
@@ -605,8 +661,8 @@ mod tests {
     #[test]
     fn degraded_lists_failed_units_sorted() {
         let units = vec![
-            unit("b.service", ActiveState::Failed, 0),
-            unit("a.service", ActiveState::Failed, 0),
+            unit("b.service", ACTIVE_STATE_FAILED, 0),
+            unit("a.service", ACTIVE_STATE_FAILED, 0),
         ];
         assert_eq!(
             rate_system_health(
@@ -620,7 +676,7 @@ mod tests {
 
     #[test]
     fn degraded_lists_failed_non_service_units() {
-        let units = vec![unit("data.mount", ActiveState::Failed, 0)];
+        let units = vec![unit("data.mount", ACTIVE_STATE_FAILED, 0)];
         assert_eq!(
             rate_system_health(
                 &SystemState::Degraded,
@@ -635,7 +691,7 @@ mod tests {
     // then and there is nothing to name in the reboot reason
     #[test]
     fn degraded_without_failed_units_keeps_polling() {
-        let units = vec![unit("a.service", ActiveState::Active, 0)];
+        let units = vec![unit("a.service", "active", 0)];
         assert_eq!(
             rate_system_health(
                 &SystemState::Degraded,
@@ -654,7 +710,7 @@ mod tests {
         for n_restarts in 1..CRASH_LOOP_RESTART_THRESHOLD_DEFAULT {
             let units = vec![restart_cycle_unit(
                 "loop.service",
-                SubState::AutoRestart,
+                SUB_STATE_AUTO_RESTART,
                 n_restarts,
             )];
             assert_eq!(
@@ -672,8 +728,8 @@ mod tests {
     #[test]
     fn system_without_restarts_is_healthy() {
         let units = vec![
-            unit("a.service", ActiveState::Active, 0),
-            unit("b.timer", ActiveState::Inactive, 0),
+            unit("a.service", "active", 0),
+            unit("b.timer", "inactive", 0),
         ];
         assert_eq!(
             rate_system_health(
@@ -689,7 +745,7 @@ mod tests {
     fn restart_threshold_is_a_crash_loop() {
         let units = vec![restart_cycle_unit(
             "loop.service",
-            SubState::AutoRestart,
+            SUB_STATE_AUTO_RESTART,
             CRASH_LOOP_RESTART_THRESHOLD_DEFAULT,
         )];
         assert_eq!(
@@ -708,7 +764,7 @@ mod tests {
     fn a_queued_restart_is_a_crash_loop() {
         let units = vec![restart_cycle_unit(
             "loop.service",
-            SubState::AutoRestartQueued,
+            SUB_STATE_AUTO_RESTART_QUEUED,
             CRASH_LOOP_RESTART_THRESHOLD_DEFAULT,
         )];
         assert_eq!(
@@ -725,7 +781,7 @@ mod tests {
     // restart history must not keep the check polling then
     #[test]
     fn a_normal_start_with_restart_history_is_healthy() {
-        let units = vec![unit("a.service", ActiveState::Activating, 5)];
+        let units = vec![unit("a.service", ACTIVE_STATE_ACTIVATING, 5)];
         assert_eq!(
             rate_system_health(
                 &SystemState::Running,
@@ -738,7 +794,11 @@ mod tests {
 
     #[test]
     fn custom_threshold_is_honored() {
-        let units = vec![restart_cycle_unit("loop.service", SubState::AutoRestart, 1)];
+        let units = vec![restart_cycle_unit(
+            "loop.service",
+            SUB_STATE_AUTO_RESTART,
+            1,
+        )];
         assert_eq!(
             rate_system_health(&SystemState::Running, &units, 1),
             SystemHealth::CrashLooping(names(&["loop.service"]))
@@ -758,7 +818,7 @@ mod tests {
 
     #[test]
     fn recovered_unit_with_restart_history_is_not_a_crash_loop() {
-        let units = vec![unit("a.service", ActiveState::Active, 5)];
+        let units = vec![unit("a.service", "active", 5)];
         assert_eq!(
             rate_system_health(
                 &SystemState::Running,
@@ -773,7 +833,7 @@ mod tests {
     // already reports, so it must not be counted as a loop
     #[test]
     fn unit_that_gave_up_restarting_is_not_a_crash_loop() {
-        let units = vec![unit("loop.service", ActiveState::Failed, 5)];
+        let units = vec![unit("loop.service", ACTIVE_STATE_FAILED, 5)];
         assert_eq!(
             rate_system_health(
                 &SystemState::Degraded,
