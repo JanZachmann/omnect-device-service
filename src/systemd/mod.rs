@@ -11,7 +11,7 @@ use std::{
     sync::Once,
     time::{Duration, Instant},
 };
-use systemd_zbus::{ActiveState, ManagerProxy};
+use systemd_zbus::{ActiveState, ManagerProxy, SubState};
 use zbus::proxy::CacheProperties;
 
 const SYSTEM_STATE_RUNNING: &str = "running";
@@ -236,15 +236,17 @@ async fn collect_unit_health(
     {
         // a transient per-unit D-Bus error must not abort the validation, so it
         // counts as 0
-        let n_restarts = if unit.name.ends_with(".service") && in_restart_cycle(&unit.active) {
-            service_n_restarts(connection, &unit).await.unwrap_or(0)
-        } else {
-            0
-        };
+        let n_restarts =
+            if unit.name.ends_with(".service") && in_restart_cycle(&unit.active, &unit.sub_state) {
+                service_n_restarts(connection, &unit).await.unwrap_or(0)
+            } else {
+                0
+            };
 
         units.push(UnitHealth {
             name: unit.name,
             active: unit.active,
+            sub_state: unit.sub_state,
             n_restarts,
         });
     }
@@ -291,6 +293,7 @@ fn crash_loop_restart_threshold() -> u32 {
 struct UnitHealth {
     name: String,
     active: ActiveState,
+    sub_state: SubState,
     n_restarts: u32,
 }
 
@@ -358,16 +361,21 @@ impl HealthTally {
     }
 }
 
-// systemd keeps a unit 'activating' between a failed start and the next attempt,
-// so only there is a restart pending; a unit that recovered or gave up is not
-fn in_restart_cycle(active: &ActiveState) -> bool {
+// systemd parks a unit in the auto-restart sub state between a failed start and
+// the next attempt, so only there is a restart pending; a normal start, and a
+// unit that recovered or gave up, is not
+fn in_restart_cycle(active: &ActiveState, sub_state: &SubState) -> bool {
     *active == ActiveState::Activating
+        && matches!(
+            sub_state,
+            SubState::AutoRestart | SubState::AutoRestartQueued
+        )
 }
 
 fn restart_cycle_units(units: &[UnitHealth], matches: impl Fn(u32) -> bool) -> Vec<String> {
     let mut names: Vec<String> = units
         .iter()
-        .filter(|u| in_restart_cycle(&u.active) && matches(u.n_restarts))
+        .filter(|u| in_restart_cycle(&u.active, &u.sub_state) && matches(u.n_restarts))
         .map(|u| u.name.clone())
         .collect();
     names.sort();
@@ -445,10 +453,28 @@ fn crash_loop_extra_info(units: &[String]) -> String {
 mod tests {
     use super::*;
 
+    // the sub state is only read for the restart cycle, so it follows the active
+    // state here; a unit in a restart cycle comes from restart_cycle_unit()
     fn unit(name: &str, active: ActiveState, n_restarts: u32) -> UnitHealth {
+        let sub_state = match active {
+            ActiveState::Active => SubState::Running,
+            ActiveState::Activating => SubState::Start,
+            ActiveState::Failed => SubState::Failed,
+            _ => SubState::Dead,
+        };
         UnitHealth {
             name: name.to_string(),
             active,
+            sub_state,
+            n_restarts,
+        }
+    }
+
+    fn restart_cycle_unit(name: &str, sub_state: SubState, n_restarts: u32) -> UnitHealth {
+        UnitHealth {
+            name: name.to_string(),
+            active: ActiveState::Activating,
+            sub_state,
             n_restarts,
         }
     }
@@ -500,9 +526,9 @@ mod tests {
     fn crash_loop_poll() -> ScriptedPoll {
         Ok((
             SystemState::Running,
-            vec![unit(
+            vec![restart_cycle_unit(
                 "loop.service",
-                ActiveState::Activating,
+                SubState::AutoRestart,
                 CRASH_LOOP_RESTART_THRESHOLD_DEFAULT,
             )],
         ))
@@ -511,7 +537,7 @@ mod tests {
     fn restarting_poll() -> ScriptedPoll {
         Ok((
             SystemState::Running,
-            vec![unit("loop.service", ActiveState::Activating, 1)],
+            vec![restart_cycle_unit("loop.service", SubState::AutoRestart, 1)],
         ))
     }
 
@@ -594,7 +620,11 @@ mod tests {
     #[test]
     fn restart_below_threshold_is_not_yet_healthy() {
         for n_restarts in 1..CRASH_LOOP_RESTART_THRESHOLD_DEFAULT {
-            let units = vec![unit("loop.service", ActiveState::Activating, n_restarts)];
+            let units = vec![restart_cycle_unit(
+                "loop.service",
+                SubState::AutoRestart,
+                n_restarts,
+            )];
             assert_eq!(
                 rate_system_health(
                     &SystemState::Running,
@@ -625,9 +655,9 @@ mod tests {
 
     #[test]
     fn restart_threshold_is_a_crash_loop() {
-        let units = vec![unit(
+        let units = vec![restart_cycle_unit(
             "loop.service",
-            ActiveState::Activating,
+            SubState::AutoRestart,
             CRASH_LOOP_RESTART_THRESHOLD_DEFAULT,
         )];
         assert_eq!(
@@ -640,9 +670,43 @@ mod tests {
         );
     }
 
+    // a queued restart is the same pending restart, newer systemd reports it as
+    // its own sub state
+    #[test]
+    fn a_queued_restart_is_a_crash_loop() {
+        let units = vec![restart_cycle_unit(
+            "loop.service",
+            SubState::AutoRestartQueued,
+            CRASH_LOOP_RESTART_THRESHOLD_DEFAULT,
+        )];
+        assert_eq!(
+            rate_system_health(
+                &SystemState::Running,
+                &units,
+                CRASH_LOOP_RESTART_THRESHOLD_DEFAULT
+            ),
+            SystemHealth::CrashLooping(names(&["loop.service"]))
+        );
+    }
+
+    // 'activating' is also a normal start, e.g. by a timer or a dependency; a
+    // restart history must not keep the check polling then
+    #[test]
+    fn a_normal_start_with_restart_history_is_healthy() {
+        let units = vec![unit("a.service", ActiveState::Activating, 5)];
+        assert_eq!(
+            rate_system_health(
+                &SystemState::Running,
+                &units,
+                CRASH_LOOP_RESTART_THRESHOLD_DEFAULT
+            ),
+            SystemHealth::Healthy
+        );
+    }
+
     #[test]
     fn custom_threshold_is_honored() {
-        let units = vec![unit("loop.service", ActiveState::Activating, 1)];
+        let units = vec![restart_cycle_unit("loop.service", SubState::AutoRestart, 1)];
         assert_eq!(
             rate_system_health(&SystemState::Running, &units, 1),
             SystemHealth::CrashLooping(names(&["loop.service"]))
