@@ -8,7 +8,12 @@ use anyhow::{Context, Result};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{env, fs, path::Path, sync::Arc, time::SystemTime};
+use std::{
+    env, fs,
+    path::Path,
+    sync::Arc,
+    time::{Instant, SystemTime},
+};
 use tokio::{
     sync::{RwLock, oneshot},
     time::{Duration, timeout},
@@ -23,6 +28,14 @@ static UPDATE_VALIDATION_COMPLETE_BARRIER_FILE: &str =
 static UPDATE_VALIDATION_FAILED_FILE: &str =
     "/run/omnect-device-service/omnect_validate_update_failed";
 static UPDATE_VALIDATION_TIMEOUT_IN_SECS_DEFAULT: u64 = 300;
+static SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS: u64 = 30;
+
+// validation only starts after authentication, so the health check gets the
+// time that is actually left: the margin keeps its descriptive error ahead of
+// the generic validation timeout, which decides the reboot reason
+fn health_deadline(remaining: Duration) -> Duration {
+    remaining.saturating_sub(Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS))
+}
 
 #[derive(Clone, Debug, Default, Serialize)]
 enum UpdateValidationStatus {
@@ -145,15 +158,13 @@ impl UpdateValidation {
         Ok(())
     }
 
-    async fn validate(local_update: bool) -> Result<()> {
+    async fn validate(local_update: bool, deadline: Instant) -> Result<()> {
         debug!("validate update");
 
-        systemd::wait_for_system_running().await?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        systemd::wait_for_system_healthy(health_deadline(remaining)).await?;
 
-        /* ToDo: if it returns with an error, we may want to handle the state
-         * "degraded" and possibly ignore certain failed services via configuration
-         */
-        info!("system is running");
+        info!("system is healthy");
 
         // remove iot-hub-device-service barrier file and start service as part of validation
         debug!("starting {IOT_HUB_DEVICE_UPDATE_SERVICE}");
@@ -225,6 +236,9 @@ impl UpdateValidation {
             .deadline_timestamp
             .duration_since(SystemTime::now())
             .context("failed to build remaining timeout secs")?;
+        // the timeout below is monotonic, so the health deadline must be too:
+        // a clock step during boot must not shorten it
+        let deadline = Instant::now() + remaining_time;
         let status = Arc::clone(&self.status);
         let local_update = self.local_update;
         self.tx_cancel_timer = Some(tx_cancel_timer);
@@ -238,7 +252,7 @@ impl UpdateValidation {
                     return Ok(());
                 }
 
-                Self::validate(local_update).await?;
+                Self::validate(local_update, deadline).await?;
                 Self::finalize(status).await
             };
 
@@ -300,6 +314,37 @@ mod tests {
     use super::*;
 
     use crate::bootloader_env::TEST_LOCK as BOOTARGS_TEST_LOCK;
+
+    #[test]
+    fn health_deadline_keeps_margin_to_validation_timeout() {
+        let remaining = Duration::from_secs(UPDATE_VALIDATION_TIMEOUT_IN_SECS_DEFAULT);
+        assert_eq!(
+            health_deadline(remaining),
+            remaining - Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS)
+        );
+    }
+
+    #[test]
+    fn health_deadline_without_slack_is_zero() {
+        assert_eq!(
+            health_deadline(Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS)),
+            Duration::ZERO
+        );
+        assert_eq!(health_deadline(Duration::ZERO), Duration::ZERO);
+    }
+
+    // a low configured timeout must not produce a deadline beyond it, else the
+    // generic timeout wins the race and the reboot reason loses the cause
+    #[test]
+    fn health_deadline_never_exceeds_remaining_time() {
+        for secs in [1, 10, SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS, 90, 1200] {
+            let remaining = Duration::from_secs(secs);
+            assert!(
+                health_deadline(remaining) < remaining || remaining.is_zero(),
+                "deadline for {secs}s remaining is not shorter than the remaining time"
+            );
+        }
+    }
 
     #[test]
     fn finalize_bootargs_noargs_sentinel_unsets_both_keys() {

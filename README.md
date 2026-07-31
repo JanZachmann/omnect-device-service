@@ -923,6 +923,12 @@ curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/
 curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/healthcheck/v1
 ```
 
+Independent of this endpoint, the [healthcheck](healthcheck/) directory contains
+scripts that check specific system functions and rate each one green, yellow, or
+red. `omnect_health_check.sh` runs the checks configured in
+`omnect_health_checks.json` and derives the script name from each entry's type,
+so the configuration file lists what a device actually checks.
+
 ### Status updates
 
 omnect-device-service is capable to publish certain properties to a list of defined endpoints. Currently the following properties are published:
