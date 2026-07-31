@@ -20,6 +20,7 @@ const SYSTEM_HEALTHY_POLL_INTERVAL: Duration = Duration::from_secs(2);
 // a single poll can land in a restart window in either direction, so a healthy
 // and an unhealthy verdict both need this many observations
 const HEALTH_CONFIRMATION_POLLS: u32 = 3;
+const CRASH_LOOP_RESTART_THRESHOLD_ENV: &str = "CRASH_LOOP_RESTART_THRESHOLD";
 const CRASH_LOOP_RESTART_THRESHOLD_DEFAULT: u32 = 3;
 // the unit list ends up in extra_info, which is written to a fixed size pmsg
 // record shared by several reboot reasons
@@ -277,7 +278,7 @@ pub async fn reboot(_reason: &str, _extra_info: &str) -> Result<()> {
 // overridable: how many retries are normal varies per deployment
 fn crash_loop_restart_threshold() -> u32 {
     let mut threshold = CRASH_LOOP_RESTART_THRESHOLD_DEFAULT;
-    if let Ok(value) = std::env::var("CRASH_LOOP_RESTART_THRESHOLD") {
+    if let Ok(value) = std::env::var(CRASH_LOOP_RESTART_THRESHOLD_ENV) {
         match value.parse::<u32>() {
             // 0 would rate every service in a restart cycle a crash loop
             Ok(0) | Err(_) => error!(
@@ -481,6 +482,37 @@ mod tests {
 
     fn names(names: &[&str]) -> Vec<String> {
         names.iter().map(|n| n.to_string()).collect()
+    }
+
+    // tests share the process, so a failing assert must not leave the variable
+    // behind for whatever test runs next
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn new(key: &'static str, value: &str) -> Self {
+            let guard = Self {
+                key,
+                previous: std::env::var(key).ok(),
+            };
+            guard.set(value);
+            guard
+        }
+
+        fn set(&self, value: &str) {
+            crate::common::set_env_var(self.key, value);
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => crate::common::set_env_var(self.key, value),
+                None => crate::common::remove_env_var(self.key),
+            }
+        }
     }
 
     type ScriptedPoll = Result<(SystemState, Vec<UnitHealth>)>;
@@ -715,14 +747,13 @@ mod tests {
 
     #[test]
     fn zero_threshold_falls_back_to_default() {
-        crate::common::set_env_var("CRASH_LOOP_RESTART_THRESHOLD", "0");
+        let env = EnvVarGuard::new(CRASH_LOOP_RESTART_THRESHOLD_ENV, "0");
         assert_eq!(
             crash_loop_restart_threshold(),
             CRASH_LOOP_RESTART_THRESHOLD_DEFAULT
         );
-        crate::common::set_env_var("CRASH_LOOP_RESTART_THRESHOLD", "5");
+        env.set("5");
         assert_eq!(crash_loop_restart_threshold(), 5);
-        crate::common::remove_env_var("CRASH_LOOP_RESTART_THRESHOLD");
     }
 
     #[test]
@@ -755,15 +786,15 @@ mod tests {
 
     #[test]
     fn unparseable_threshold_falls_back_to_default() {
+        let env = EnvVarGuard::new(CRASH_LOOP_RESTART_THRESHOLD_ENV, "");
         for value in ["", "no", "-1"] {
-            crate::common::set_env_var("CRASH_LOOP_RESTART_THRESHOLD", value);
+            env.set(value);
             assert_eq!(
                 crash_loop_restart_threshold(),
                 CRASH_LOOP_RESTART_THRESHOLD_DEFAULT,
                 "\"{value}\" should fall back to the default"
             );
         }
-        crate::common::remove_env_var("CRASH_LOOP_RESTART_THRESHOLD");
     }
 
     #[test]
