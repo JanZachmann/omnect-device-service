@@ -190,7 +190,9 @@ where
             Err(e) => {
                 poll_errors += 1;
                 if poll_errors >= HEALTH_CONFIRMATION_POLLS {
-                    return Err(e.context("failed to poll system health repeatedly"));
+                    // the reboot reason takes the outermost message only, so the
+                    // cause has to be in it
+                    anyhow::bail!("failed to poll system health repeatedly: {e:#}");
                 }
                 warn!("system health poll failed, retrying: {e:#}");
                 same_class_polls = 0;
@@ -1045,9 +1047,9 @@ mod tests {
             .collect();
         let (result, polls) = watch(script, Duration::from_secs(60)).await;
         let error = result.expect_err("a broken bus should fail the validation");
-        assert_eq!(error.to_string(), "failed to poll system health repeatedly");
+        // the cause has to be in the message the reboot reason takes
         assert_eq!(
-            format!("{error:#}"),
+            error.to_string(),
             format!("failed to poll system health repeatedly: {POLL_ERROR}")
         );
         assert_eq!(polls, HEALTH_CONFIRMATION_POLLS as usize);
