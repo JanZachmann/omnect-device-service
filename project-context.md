@@ -57,6 +57,7 @@
 - `sudo/` — sudoers drop-in files granting the service permission for specific privileged commands
 - `polkit/` — polkit rules for D-Bus permissions
 - `testfiles/` — test fixtures (positive/negative cases, Wi-Fi commissioning configs)
+- `tests/` — integration tests for things with no Rust module to live in, e.g. the shell wrappers in `sudo/`; everything else is tested in a `#[cfg(test)] mod` inside the file under test
 
 ## 4. Repository-Specific Constraints
 
