@@ -55,12 +55,14 @@ The following checks must be passed in order to successfully validate an update:
   the same number of polls fails in a row
 - at the deadline all unhealthy observations of the wait count, consecutive or
   not: validation fails once they reach the same number, or if no poll was
-  healthy at all
-- otherwise the last observation decides:
-  - system still starting: validation fails
-  - healthy, restart pending below the threshold, or unhealthy without the
-    number of observations above: validation succeeds, because a rollback needs
-    evidence
+  healthy at all. The reported cause is the one with the most observations
+- otherwise one healthy observation is enough to succeed, whatever the last poll
+  saw, because a rollback needs evidence
+- without any healthy observation the last one decides: a system that is still
+  starting fails, a restart pending below the threshold succeeds
+- when the remaining validation time is at or below the safety margin the
+  deadline is zero. The first observation then decides by the rules above, and
+  since no poll was healthy yet a single unhealthy one fails the validation
 - on a failed validation the reboot reason `swupdate-validation-failed` is
   logged with the cause as extra info: the failed units, the crash-looping
   units, or the last system state
