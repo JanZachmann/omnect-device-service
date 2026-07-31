@@ -214,6 +214,12 @@ fn deadline_verdict(tally: &HealthTally, last_health: Option<&SystemHealth>) -> 
         return Err(anyhow::anyhow!("{info}"));
     }
 
+    // a healthy observation the tally did not turn into a verdict still speaks
+    // for the update, whatever state the last poll happened to see
+    if tally.healthy_polls > 0 {
+        return Ok(());
+    }
+
     match last_health {
         // reaching the crash loop threshold takes threshold x RestartSec, much
         // longer than the confirmation polls, so a pending restart is no proof
@@ -985,6 +991,15 @@ mod tests {
                 .to_string(),
             degraded_extra_info(&names(&["a.service"]))
         );
+    }
+
+    // a system that was up before must not be rolled back because the last poll
+    // saw a state the check does not rate, e.g. degraded without a name to report
+    #[test]
+    fn a_healthy_poll_survives_an_unrated_last_observation() {
+        let unrated = SystemHealth::Starting(SYSTEM_STATE_DEGRADED.to_string());
+        deadline_verdict(&tally(&[SystemHealth::Healthy]), Some(&unrated))
+            .expect("a healthy observation should still count at the deadline");
     }
 
     #[test]
