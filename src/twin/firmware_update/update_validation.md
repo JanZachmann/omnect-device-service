@@ -51,6 +51,8 @@ The following checks must be passed in order to successfully validate an update:
 - a service in a restart cycle below the crash loop threshold keeps the check
   polling, since it can still reach the threshold
 - before the deadline a verdict needs consecutive observations of one kind
+- a failed poll is no observation: the wait keeps polling and only gives up when
+  the same number of polls fails in a row
 - at the deadline all unhealthy observations of the wait count, consecutive or
   not: validation fails once they reach the same number, or if no poll was
   healthy at all

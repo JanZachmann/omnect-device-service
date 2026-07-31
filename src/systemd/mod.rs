@@ -116,32 +116,53 @@ where
     let mut tally = HealthTally::default();
     let mut same_class_polls = 0u32;
     let mut last_class: Option<Discriminant<SystemHealth>> = None;
+    let mut last_health: Option<SystemHealth> = None;
+    let mut poll_errors = 0u32;
 
     loop {
-        let (state, units) = poll().await?;
-        let health = rate_system_health(&state, &units, threshold);
+        match poll().await {
+            Ok((state, units)) => {
+                poll_errors = 0;
+                let health = rate_system_health(&state, &units, threshold);
 
-        let current = std::mem::discriminant(&health);
-        same_class_polls = if last_class == Some(current) {
-            same_class_polls + 1
-        } else {
-            1
-        };
-        last_class = Some(current);
-        tally.observe(&health);
+                let current = std::mem::discriminant(&health);
+                same_class_polls = if last_class == Some(current) {
+                    same_class_polls + 1
+                } else {
+                    1
+                };
+                last_class = Some(current);
+                tally.observe(&health);
 
-        if same_class_polls >= HEALTH_CONFIRMATION_POLLS {
-            match &health {
-                SystemHealth::Healthy => return Ok(()),
-                SystemHealth::Degraded(units) => anyhow::bail!(degraded_extra_info(units)),
-                SystemHealth::CrashLooping(units) => anyhow::bail!(crash_loop_extra_info(units)),
-                // no final verdict, so these keep polling until the deadline
-                SystemHealth::Restarting(_) | SystemHealth::Starting(_) => {}
+                if same_class_polls >= HEALTH_CONFIRMATION_POLLS {
+                    match &health {
+                        SystemHealth::Healthy => return Ok(()),
+                        SystemHealth::Degraded(units) => anyhow::bail!(degraded_extra_info(units)),
+                        SystemHealth::CrashLooping(units) => {
+                            anyhow::bail!(crash_loop_extra_info(units))
+                        }
+                        // no final verdict, so these keep polling until the deadline
+                        SystemHealth::Restarting(_) | SystemHealth::Starting(_) => {}
+                    }
+                }
+
+                last_health = Some(health);
+            }
+            // a bus that stays broken is a failure, but a single failed poll is
+            // no observation and must not decide, just like a single unhealthy one
+            Err(e) => {
+                poll_errors += 1;
+                if poll_errors >= HEALTH_CONFIRMATION_POLLS {
+                    return Err(e.context("failed to poll system health repeatedly"));
+                }
+                warn!("system health poll failed, retrying: {e:#}");
+                same_class_polls = 0;
+                last_class = None;
             }
         }
 
         if start.elapsed() >= deadline {
-            return deadline_verdict(&tally, &health);
+            return deadline_verdict(&tally, last_health.as_ref());
         }
 
         tokio::time::sleep(poll_interval).await;
@@ -151,7 +172,7 @@ where
 // the verdict once the deadline is reached: an unhealthy tally outweighs the
 // last observation, so a system that alternates is not decided by whichever
 // poll happened to be last
-fn deadline_verdict(tally: &HealthTally, last_health: &SystemHealth) -> Result<()> {
+fn deadline_verdict(tally: &HealthTally, last_health: Option<&SystemHealth>) -> Result<()> {
     if let Some(info) = tally.unhealthy_verdict() {
         return Err(anyhow::anyhow!("{info}"));
     }
@@ -160,19 +181,25 @@ fn deadline_verdict(tally: &HealthTally, last_health: &SystemHealth) -> Result<(
         // reaching the crash loop threshold takes threshold x RestartSec, much
         // longer than the confirmation polls, so a pending restart is no proof
         // of a loop and must not roll back the update
-        SystemHealth::Restarting(units) => {
+        Some(SystemHealth::Restarting(units)) => {
             warn!(
                 "deadline reached while units were still restarting: {}",
                 report_units(units)
             );
             Ok(())
         }
-        SystemHealth::Starting(state) => Err(anyhow::anyhow!(
+        Some(SystemHealth::Starting(state)) => Err(anyhow::anyhow!(
             "system not healthy within deadline, last state: {state}"
         )),
         // an unhealthy observation the tally did not confirm is no basis for a
         // rollback
-        SystemHealth::Healthy | SystemHealth::Degraded(_) | SystemHealth::CrashLooping(_) => Ok(()),
+        Some(SystemHealth::Healthy | SystemHealth::Degraded(_) | SystemHealth::CrashLooping(_)) => {
+            Ok(())
+        }
+        // every poll failed
+        None => Err(anyhow::anyhow!(
+            "no system health observation within deadline"
+        )),
     }
 }
 
@@ -430,12 +457,13 @@ mod tests {
         names.iter().map(|n| n.to_string()).collect()
     }
 
+    type ScriptedPoll = Result<(SystemState, Vec<UnitHealth>)>;
+
+    const POLL_ERROR: &str = "system bus is gone";
+
     // drives the decision loop over a scripted poll sequence; an exhausted
     // script is an error, so a test can prove the loop did not stop early
-    async fn watch(
-        script: Vec<(SystemState, Vec<UnitHealth>)>,
-        deadline: Duration,
-    ) -> (Result<()>, usize) {
+    async fn watch(script: Vec<ScriptedPoll>, deadline: Duration) -> (Result<()>, usize) {
         let mut script = script.into_iter();
         let mut polls = 0usize;
         let result = watch_system_health(
@@ -444,43 +472,51 @@ mod tests {
             CRASH_LOOP_RESTART_THRESHOLD_DEFAULT,
             || {
                 polls += 1;
-                std::future::ready(script.next().context("poll script exhausted"))
+                std::future::ready(
+                    script
+                        .next()
+                        .unwrap_or_else(|| Err(anyhow::anyhow!("poll script exhausted"))),
+                )
             },
         )
         .await;
         (result, polls)
     }
 
-    fn healthy_poll() -> (SystemState, Vec<UnitHealth>) {
-        (
+    fn healthy_poll() -> ScriptedPoll {
+        Ok((
             SystemState::Running,
             vec![unit("a.service", ActiveState::Active, 0)],
-        )
+        ))
     }
 
-    fn degraded_poll() -> (SystemState, Vec<UnitHealth>) {
-        (
+    fn degraded_poll() -> ScriptedPoll {
+        Ok((
             SystemState::Degraded,
             vec![unit("a.service", ActiveState::Failed, 0)],
-        )
+        ))
     }
 
-    fn crash_loop_poll() -> (SystemState, Vec<UnitHealth>) {
-        (
+    fn crash_loop_poll() -> ScriptedPoll {
+        Ok((
             SystemState::Running,
             vec![unit(
                 "loop.service",
                 ActiveState::Activating,
                 CRASH_LOOP_RESTART_THRESHOLD_DEFAULT,
             )],
-        )
+        ))
     }
 
-    fn restarting_poll() -> (SystemState, Vec<UnitHealth>) {
-        (
+    fn restarting_poll() -> ScriptedPoll {
+        Ok((
             SystemState::Running,
             vec![unit("loop.service", ActiveState::Activating, 1)],
-        )
+        ))
+    }
+
+    fn failed_poll() -> ScriptedPoll {
+        Err(anyhow::anyhow!(POLL_ERROR))
     }
 
     #[test]
@@ -776,7 +812,7 @@ mod tests {
             .collect();
         for last_health in [SystemHealth::Healthy, degraded()] {
             assert_eq!(
-                deadline_verdict(&tally(&observations), &last_health)
+                deadline_verdict(&tally(&observations), Some(&last_health))
                     .expect_err("an alternating system should fail")
                     .to_string(),
                 degraded_extra_info(&names(&["a.service"]))
@@ -789,7 +825,7 @@ mod tests {
     #[test]
     fn a_single_unhealthy_poll_decides_a_deadline_without_healthy_polls() {
         assert_eq!(
-            deadline_verdict(&tally(&[degraded()]), &degraded())
+            deadline_verdict(&tally(&[degraded()]), Some(&degraded()))
                 .expect_err("a system that was never healthy should fail")
                 .to_string(),
             degraded_extra_info(&names(&["a.service"]))
@@ -799,7 +835,7 @@ mod tests {
     #[test]
     fn unconfirmed_degraded_at_the_deadline_does_not_roll_back() {
         let observations = [SystemHealth::Healthy, degraded()];
-        deadline_verdict(&tally(&observations), &degraded())
+        deadline_verdict(&tally(&observations), Some(&degraded()))
             .expect("a single degraded poll is no basis for a rollback");
     }
 
@@ -822,9 +858,54 @@ mod tests {
         result.expect("a pending restart is no proof of a crash loop");
     }
 
+    // a bus hiccup while the system is still booting is a single observation
+    // like any other and must not roll back the update
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_poll_does_not_end_the_wait() {
+        let mut script = vec![failed_poll()];
+        script.extend((0..HEALTH_CONFIRMATION_POLLS).map(|_| healthy_poll()));
+        let (result, _) = watch(script, Duration::from_secs(60)).await;
+        result.expect("a single failed poll should not fail the validation");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn repeatedly_failed_polls_end_the_wait() {
+        let script = (0..HEALTH_CONFIRMATION_POLLS)
+            .map(|_| failed_poll())
+            .collect();
+        let (result, polls) = watch(script, Duration::from_secs(60)).await;
+        let error = result.expect_err("a broken bus should fail the validation");
+        assert_eq!(error.to_string(), "failed to poll system health repeatedly");
+        assert_eq!(
+            format!("{error:#}"),
+            format!("failed to poll system health repeatedly: {POLL_ERROR}")
+        );
+        assert_eq!(polls, HEALTH_CONFIRMATION_POLLS as usize);
+    }
+
+    // a failed poll is no observation, so the confirmation starts over
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_poll_breaks_the_confirmation() {
+        let mut script = vec![healthy_poll(), healthy_poll(), failed_poll()];
+        script.extend((0..HEALTH_CONFIRMATION_POLLS).map(|_| healthy_poll()));
+        let (result, polls) = watch(script, Duration::from_secs(60)).await;
+        result.expect("healthy system should validate");
+        assert_eq!(polls, 3 + HEALTH_CONFIRMATION_POLLS as usize);
+    }
+
+    #[test]
+    fn a_deadline_without_any_observation_fails() {
+        assert_eq!(
+            deadline_verdict(&HealthTally::default(), None)
+                .expect_err("a wait without an observation should fail")
+                .to_string(),
+            "no system health observation within deadline"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn still_starting_at_the_deadline_fails() {
-        let script = vec![(SystemState::parse("initializing"), vec![])];
+        let script = vec![Ok((SystemState::parse("initializing"), vec![]))];
         let (result, _) = watch(script, Duration::ZERO).await;
         assert_eq!(
             result
