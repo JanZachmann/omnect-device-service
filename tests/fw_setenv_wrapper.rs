@@ -110,9 +110,8 @@ fn value_with_spaces_stays_one_argument() {
     );
 }
 
-/// An empty value must still be forwarded, otherwise the call turns into a delete.
 #[test]
-fn empty_value_is_forwarded() {
+fn empty_value_is_forwarded_instead_of_deleting() {
     assert_eq!(
         forwarded_args("omnect_extra_bootargs", ""),
         expected_args("omnect_extra_bootargs", "")

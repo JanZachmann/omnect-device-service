@@ -57,7 +57,7 @@
 - `sudo/` — sudoers drop-in files granting the service permission for specific privileged commands
 - `polkit/` — polkit rules for D-Bus permissions
 - `testfiles/` — test fixtures (positive/negative cases, Wi-Fi commissioning configs)
-- `tests/` — integration tests for things with no Rust module to live in, e.g. the shell wrappers in `sudo/`; everything else is tested in a `#[cfg(test)] mod` inside the file under test
+- `tests/` — integration tests for things with no Rust module to live in, e.g. the shell wrappers in `sudo/`
 
 ## 4. Repository-Specific Constraints
 
@@ -65,6 +65,7 @@
 - **Feature trait pattern:** Every device capability implements the `Feature` trait (in its own `src/twin/*.rs` module). Adding a new feature means: (1) implement `Feature`, (2) add a `Command` variant, (3) register in `Twin::new()` feature map.
 - **Command dispatch:** All operations flow through the `Command` enum and parsing helpers in `src/twin/feature/command.rs`, with file-watch handling in `fs_watcher.rs`. Direct methods, desired properties, file-system events, and intervals all produce `Command` values that get routed to the owning feature via `TypeId`.
 - **Web service publish pattern:** Features publish state via `web_service::publish(PublishChannel, value)`. External consumers register endpoints in `/run/omnect-device-service/publish_endpoints.json`.
+- **Test location:** Unit tests live in a `#[cfg(test)] mod` inside the file under test. `tests/` is only for what has no Rust module to attach to, such as the shell wrappers in `sudo/`.
 - **`#[cfg(test)]` IoT Hub mock:** In test builds, `Twin` uses `MockMyIotHub` (generated via `mockall`) instead of the real `IotHubClient`. See `src/twin/mod_test.rs`.
 - **Privileged operations:** The service runs unprivileged but uses sudoers rules (`sudo/`) and polkit (`polkit/`) for specific operations (grub-editenv, fw_setenv, journalctl, reboot).
 - **`modem_info` feature:** Opt-in via the `modem_info` Cargo feature (pulls in the `modemmanager` crate). Not active by default.
