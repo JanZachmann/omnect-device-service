@@ -18,7 +18,7 @@ const SYSTEM_STATE_RUNNING: &str = "running";
 const SYSTEM_STATE_DEGRADED: &str = "degraded";
 const SYSTEM_HEALTHY_POLL_INTERVAL: Duration = Duration::from_secs(2);
 // a single poll can land in a restart window in either direction, so a healthy
-// and an unhealthy verdict both need the same number of consecutive observations
+// and an unhealthy verdict both need this many observations
 const HEALTH_CONFIRMATION_POLLS: u32 = 3;
 const CRASH_LOOP_RESTART_THRESHOLD_DEFAULT: u32 = 3;
 // the unit list ends up in extra_info, which is written to a fixed size pmsg
@@ -113,22 +113,24 @@ where
     Fut: Future<Output = Result<(SystemState, Vec<UnitHealth>)>>,
 {
     let start = Instant::now();
-    let mut same_health_polls = 0u32;
-    let mut last_health: Option<Discriminant<SystemHealth>> = None;
+    let mut tally = HealthTally::default();
+    let mut same_class_polls = 0u32;
+    let mut last_class: Option<Discriminant<SystemHealth>> = None;
 
     loop {
         let (state, units) = poll().await?;
         let health = rate_system_health(&state, &units, threshold);
 
         let current = std::mem::discriminant(&health);
-        same_health_polls = if last_health == Some(current) {
-            same_health_polls + 1
+        same_class_polls = if last_class == Some(current) {
+            same_class_polls + 1
         } else {
             1
         };
-        last_health = Some(current);
+        last_class = Some(current);
+        tally.observe(&health);
 
-        if same_health_polls >= HEALTH_CONFIRMATION_POLLS {
+        if same_class_polls >= HEALTH_CONFIRMATION_POLLS {
             match &health {
                 SystemHealth::Healthy => return Ok(()),
                 SystemHealth::Degraded(units) => anyhow::bail!(degraded_extra_info(units)),
@@ -139,29 +141,38 @@ where
         }
 
         if start.elapsed() >= deadline {
-            return match &health {
-                // reaching the crash loop threshold takes threshold x RestartSec,
-                // much longer than the confirmation polls, so a pending restart
-                // is no proof of a loop and must not roll back the update
-                SystemHealth::Restarting(units) => {
-                    warn!(
-                        "deadline reached while units were still restarting: {}",
-                        report_units(units)
-                    );
-                    Ok(())
-                }
-                SystemHealth::Healthy => Ok(()),
-                SystemHealth::Degraded(units) => Err(anyhow::anyhow!(degraded_extra_info(units))),
-                SystemHealth::CrashLooping(units) => {
-                    Err(anyhow::anyhow!(crash_loop_extra_info(units)))
-                }
-                SystemHealth::Starting(state) => Err(anyhow::anyhow!(
-                    "system not healthy within deadline, last state: {state}"
-                )),
-            };
+            return deadline_verdict(&tally, &health);
         }
 
         tokio::time::sleep(poll_interval).await;
+    }
+}
+
+// the verdict once the deadline is reached: an unhealthy tally outweighs the
+// last observation, so a system that alternates is not decided by whichever
+// poll happened to be last
+fn deadline_verdict(tally: &HealthTally, last_health: &SystemHealth) -> Result<()> {
+    if let Some(info) = tally.unhealthy_verdict() {
+        return Err(anyhow::anyhow!("{info}"));
+    }
+
+    match last_health {
+        // reaching the crash loop threshold takes threshold x RestartSec, much
+        // longer than the confirmation polls, so a pending restart is no proof
+        // of a loop and must not roll back the update
+        SystemHealth::Restarting(units) => {
+            warn!(
+                "deadline reached while units were still restarting: {}",
+                report_units(units)
+            );
+            Ok(())
+        }
+        SystemHealth::Starting(state) => Err(anyhow::anyhow!(
+            "system not healthy within deadline, last state: {state}"
+        )),
+        // an unhealthy observation the tally did not confirm is no basis for a
+        // rollback
+        SystemHealth::Healthy | SystemHealth::Degraded(_) | SystemHealth::CrashLooping(_) => Ok(()),
     }
 }
 
@@ -281,6 +292,43 @@ enum SystemHealth {
     Restarting(Vec<String>),
     Degraded(Vec<String>),
     CrashLooping(Vec<String>),
+}
+
+// all observations of a wait; only healthy and unhealthy ones carry a verdict,
+// a starting or restarting system says nothing yet
+#[derive(Default)]
+struct HealthTally {
+    healthy_polls: u32,
+    unhealthy_polls: u32,
+    last_unhealthy_info: Option<String>,
+}
+
+impl HealthTally {
+    fn observe(&mut self, health: &SystemHealth) {
+        match health {
+            SystemHealth::Healthy => self.healthy_polls += 1,
+            SystemHealth::Degraded(units) => self.observe_unhealthy(degraded_extra_info(units)),
+            SystemHealth::CrashLooping(units) => {
+                self.observe_unhealthy(crash_loop_extra_info(units))
+            }
+            SystemHealth::Restarting(_) | SystemHealth::Starting(_) => {}
+        }
+    }
+
+    fn observe_unhealthy(&mut self, info: String) {
+        self.unhealthy_polls += 1;
+        self.last_unhealthy_info = Some(info);
+    }
+
+    // an unhealthy verdict needs as many observations as a confirmed one, only
+    // not consecutive; without a single healthy observation there is nothing
+    // that speaks for the update, so one unhealthy observation is enough
+    fn unhealthy_verdict(&self) -> Option<&str> {
+        if self.unhealthy_polls >= HEALTH_CONFIRMATION_POLLS || self.healthy_polls == 0 {
+            return self.last_unhealthy_info.as_deref();
+        }
+        None
+    }
 }
 
 // systemd keeps a unit 'activating' between a failed start and the next attempt,
@@ -693,6 +741,66 @@ mod tests {
             result.expect_err("crash loop should fail").to_string(),
             crash_loop_extra_info(&names(&["loop.service"]))
         );
+    }
+
+    fn tally(observations: &[SystemHealth]) -> HealthTally {
+        let mut tally = HealthTally::default();
+        for health in observations {
+            tally.observe(health);
+        }
+        tally
+    }
+
+    fn degraded() -> SystemHealth {
+        SystemHealth::Degraded(names(&["a.service"]))
+    }
+
+    #[test]
+    fn unconfirmed_unhealthy_polls_do_not_decide_the_deadline() {
+        for unhealthy in 1..HEALTH_CONFIRMATION_POLLS {
+            let mut observations = vec![SystemHealth::Healthy];
+            observations.extend((0..unhealthy).map(|_| degraded()));
+            assert_eq!(
+                tally(&observations).unhealthy_verdict(),
+                None,
+                "{unhealthy} degraded polls should not outweigh a healthy one"
+            );
+        }
+    }
+
+    // the deadline verdict must not depend on which poll happened to be last
+    #[test]
+    fn repeated_unhealthy_polls_decide_the_deadline() {
+        let mut observations: Vec<SystemHealth> = (0..HEALTH_CONFIRMATION_POLLS)
+            .flat_map(|_| [SystemHealth::Healthy, degraded()])
+            .collect();
+        for last_health in [SystemHealth::Healthy, degraded()] {
+            assert_eq!(
+                deadline_verdict(&tally(&observations), &last_health)
+                    .expect_err("an alternating system should fail")
+                    .to_string(),
+                degraded_extra_info(&names(&["a.service"]))
+            );
+            observations.push(last_health);
+        }
+    }
+
+    // without a healthy observation there is nothing that speaks for the update
+    #[test]
+    fn a_single_unhealthy_poll_decides_a_deadline_without_healthy_polls() {
+        assert_eq!(
+            deadline_verdict(&tally(&[degraded()]), &degraded())
+                .expect_err("a system that was never healthy should fail")
+                .to_string(),
+            degraded_extra_info(&names(&["a.service"]))
+        );
+    }
+
+    #[test]
+    fn unconfirmed_degraded_at_the_deadline_does_not_roll_back() {
+        let observations = [SystemHealth::Healthy, degraded()];
+        deadline_verdict(&tally(&observations), &degraded())
+            .expect("a single degraded poll is no basis for a rollback");
     }
 
     // alternating failures never confirm one class, so only the deadline ends the

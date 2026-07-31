@@ -47,14 +47,18 @@ The following checks must be passed in order to successfully validate an update:
 
 - the system state is polled until the deadline, which is the remaining
   validation time minus a safety margin; healthy and unhealthy both need several
-  consecutive observations, so a single poll landing in a restart window decides
-  nothing
+  observations, so a single poll landing in a restart window decides nothing
 - a service in a restart cycle below the crash loop threshold keeps the check
   polling, since it can still reach the threshold
-- what the deadline means depends on the last observation:
-  - system still starting, or degraded: validation fails
-  - restart pending below the threshold, or healthy: validation succeeds, because
-    a rollback needs evidence
+- before the deadline a verdict needs consecutive observations of one kind
+- at the deadline all unhealthy observations of the wait count, consecutive or
+  not: validation fails once they reach the same number, or if no poll was
+  healthy at all
+- otherwise the last observation decides:
+  - system still starting: validation fails
+  - healthy, restart pending below the threshold, or unhealthy without the
+    number of observations above: validation succeeds, because a rollback needs
+    evidence
 - on a failed validation the reboot reason `swupdate-validation-failed` is
   logged with the cause as extra info: the failed units, the crash-looping
   units, or the last system state
