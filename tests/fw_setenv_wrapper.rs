@@ -1,6 +1,6 @@
 //! Argument contract of the fw_setenv wrapper: key and value must always reach
 //! fw_setenv as data. The wrapper is exercised with a stub instead of the real
-//! binary, so the test asserts the argument vector, not libubootenv's parsing.
+//! binary, so the test asserts the argument vector.
 
 use std::{
     fs,
@@ -98,6 +98,24 @@ fn option_like_key_stays_data() {
     assert_eq!(
         forwarded_args("--scr=/tmp/evil", "1"),
         expected_args("--scr=/tmp/evil", "1")
+    );
+}
+
+#[test]
+fn value_with_spaces_stays_one_argument() {
+    let value = "console=ttyS0 root=/dev/sda2";
+    assert_eq!(
+        forwarded_args("omnect_extra_bootargs", value),
+        expected_args("omnect_extra_bootargs", value)
+    );
+}
+
+/// An empty value must still be forwarded, otherwise the call turns into a delete.
+#[test]
+fn empty_value_is_forwarded() {
+    assert_eq!(
+        forwarded_args("omnect_extra_bootargs", ""),
+        expected_args("omnect_extra_bootargs", "")
     );
 }
 
