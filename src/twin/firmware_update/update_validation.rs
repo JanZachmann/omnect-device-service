@@ -46,17 +46,19 @@ fn health_deadline(remaining: Duration) -> Duration {
 enum ValidationStage {
     Authentication = 0,
     SystemHealth = 1,
-    StartAduAgent = 2,
+    EnableAduAgent = 2,
     Finalize = 3,
 }
 
 impl ValidationStage {
+    // an unknown value falls back to the first stage: claiming a late stage
+    // would point the reader away from the one that actually hung
     fn from_u8(value: u8) -> Self {
         match value {
-            0 => Self::Authentication,
             1 => Self::SystemHealth,
-            2 => Self::StartAduAgent,
-            _ => Self::Finalize,
+            2 => Self::EnableAduAgent,
+            3 => Self::Finalize,
+            _ => Self::Authentication,
         }
     }
 
@@ -66,7 +68,7 @@ impl ValidationStage {
         match self {
             Self::Authentication => "timeout waiting for authentication",
             Self::SystemHealth => "timeout waiting for system health",
-            Self::StartAduAgent => "timeout starting adu agent",
+            Self::EnableAduAgent => "timeout enabling adu agent",
             Self::Finalize => "timeout finalizing update",
         }
     }
@@ -226,8 +228,6 @@ impl UpdateValidation {
     }
 
     async fn wait_for_healthy(deadline: Instant) -> Result<()> {
-        debug!("validate update");
-
         let remaining = deadline.saturating_duration_since(Instant::now());
         systemd::wait_for_system_healthy(health_deadline(remaining)).await?;
 
@@ -236,7 +236,7 @@ impl UpdateValidation {
         Ok(())
     }
 
-    async fn start_adu_agent(local_update: bool) -> Result<()> {
+    async fn enable_adu_agent(local_update: bool) -> Result<()> {
         // remove iot-hub-device-service barrier file and start service as part of validation
         debug!("starting {IOT_HUB_DEVICE_UPDATE_SERVICE}");
         fs::remove_file(UPDATE_VALIDATION_FILE).context("remove UPDATE_VALIDATION_FILE")?;
@@ -328,8 +328,8 @@ impl UpdateValidation {
                 observe_stage.set(ValidationStage::SystemHealth);
                 Self::wait_for_healthy(deadline).await?;
 
-                observe_stage.set(ValidationStage::StartAduAgent);
-                Self::start_adu_agent(local_update).await?;
+                observe_stage.set(ValidationStage::EnableAduAgent);
+                Self::enable_adu_agent(local_update).await?;
 
                 observe_stage.set(ValidationStage::Finalize);
                 Self::finalize(status).await
@@ -428,10 +428,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeout_reports_pending_adu_agent_start() {
+    async fn timeout_reports_pending_adu_agent_enable() {
         assert_eq!(
-            timeout_message_for(ValidationStage::StartAduAgent).await,
-            "timeout starting adu agent"
+            timeout_message_for(ValidationStage::EnableAduAgent).await,
+            "timeout enabling adu agent"
         );
     }
 
@@ -458,6 +458,14 @@ mod tests {
     #[test]
     fn stage_tracker_starts_at_authentication() {
         assert_eq!(StageTracker::new().get(), ValidationStage::Authentication);
+    }
+
+    #[test]
+    fn unknown_stage_value_falls_back_to_authentication() {
+        assert_eq!(
+            ValidationStage::from_u8(ValidationStage::Finalize as u8 + 1),
+            ValidationStage::Authentication
+        );
     }
 
     #[test]
