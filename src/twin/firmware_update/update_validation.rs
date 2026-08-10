@@ -8,7 +8,16 @@ use anyhow::{Context, Result};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{env, fs, path::Path, sync::Arc, time::SystemTime};
+use std::{
+    env, fs,
+    future::Future,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
+    time::{Instant, SystemTime},
+};
 use tokio::{
     sync::{RwLock, oneshot},
     time::{Duration, timeout},
@@ -23,6 +32,79 @@ static UPDATE_VALIDATION_COMPLETE_BARRIER_FILE: &str =
 static UPDATE_VALIDATION_FAILED_FILE: &str =
     "/run/omnect-device-service/omnect_validate_update_failed";
 static UPDATE_VALIDATION_TIMEOUT_IN_SECS_DEFAULT: u64 = 300;
+static SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS: u64 = 30;
+
+// validation only starts after authentication, so the health check gets the
+// time that is actually left: the margin keeps its descriptive error ahead of
+// the generic validation timeout, which decides the reboot reason
+fn health_deadline(remaining: Duration) -> Duration {
+    remaining.saturating_sub(Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u8)]
+enum ValidationStage {
+    Authentication = 0,
+    SystemHealth = 1,
+    EnableAduAgent = 2,
+    Finalize = 3,
+}
+
+impl ValidationStage {
+    // an unknown value falls back to the first stage: claiming a late stage
+    // would point the reader away from the one that actually hung
+    fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::SystemHealth,
+            2 => Self::EnableAduAgent,
+            3 => Self::Finalize,
+            _ => Self::Authentication,
+        }
+    }
+
+    // ends up in extra_info, which is written to a fixed size pmsg record
+    // shared by several reboot reasons, so keep it short
+    fn timeout_message(&self) -> &'static str {
+        match self {
+            Self::Authentication => "timeout waiting for authentication",
+            Self::SystemHealth => "timeout waiting for system health",
+            Self::EnableAduAgent => "timeout enabling adu agent",
+            Self::Finalize => "timeout finalizing update",
+        }
+    }
+}
+
+// the validation runs in a spawned task, so its current stage must be readable
+// from the outside to tell a timeout what was still pending
+#[derive(Clone)]
+struct StageTracker(Arc<AtomicU8>);
+
+impl StageTracker {
+    fn new() -> Self {
+        Self(Arc::new(AtomicU8::new(
+            ValidationStage::Authentication as u8,
+        )))
+    }
+
+    fn set(&self, stage: ValidationStage) {
+        self.0.store(stage as u8, Ordering::Relaxed);
+    }
+
+    fn get(&self) -> ValidationStage {
+        ValidationStage::from_u8(self.0.load(Ordering::Relaxed))
+    }
+}
+
+async fn observe_with_stage_timeout(
+    duration: Duration,
+    stage: StageTracker,
+    observe: impl Future<Output = Result<()>>,
+) -> Result<()> {
+    match timeout(duration, observe).await {
+        Ok(result) => result,
+        Err(_) => anyhow::bail!("{}", stage.get().timeout_message()),
+    }
+}
 
 #[derive(Clone, Debug, Default, Serialize)]
 enum UpdateValidationStatus {
@@ -145,16 +227,16 @@ impl UpdateValidation {
         Ok(())
     }
 
-    async fn validate(local_update: bool) -> Result<()> {
-        debug!("validate update");
+    async fn wait_for_healthy(deadline: Instant) -> Result<()> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        systemd::wait_for_system_healthy(health_deadline(remaining)).await?;
 
-        systemd::wait_for_system_running().await?;
+        info!("system is healthy");
 
-        /* ToDo: if it returns with an error, we may want to handle the state
-         * "degraded" and possibly ignore certain failed services via configuration
-         */
-        info!("system is running");
+        Ok(())
+    }
 
+    async fn enable_adu_agent(local_update: bool) -> Result<()> {
         // remove iot-hub-device-service barrier file and start service as part of validation
         debug!("starting {IOT_HUB_DEVICE_UPDATE_SERVICE}");
         fs::remove_file(UPDATE_VALIDATION_FILE).context("remove UPDATE_VALIDATION_FILE")?;
@@ -225,8 +307,13 @@ impl UpdateValidation {
             .deadline_timestamp
             .duration_since(SystemTime::now())
             .context("failed to build remaining timeout secs")?;
+        // the timeout below is monotonic, so the health deadline must be too:
+        // a clock step during boot must not shorten it
+        let deadline = Instant::now() + remaining_time;
         let status = Arc::clone(&self.status);
         let local_update = self.local_update;
+        let stage = StageTracker::new();
+        let observe_stage = stage.clone();
         self.tx_cancel_timer = Some(tx_cancel_timer);
         tokio::spawn(async move {
             info!("observe update with timeout: {}s", remaining_time.as_secs());
@@ -238,15 +325,19 @@ impl UpdateValidation {
                     return Ok(());
                 }
 
-                Self::validate(local_update).await?;
+                observe_stage.set(ValidationStage::SystemHealth);
+                Self::wait_for_healthy(deadline).await?;
+
+                observe_stage.set(ValidationStage::EnableAduAgent);
+                Self::enable_adu_agent(local_update).await?;
+
+                observe_stage.set(ValidationStage::Finalize);
                 Self::finalize(status).await
             };
 
-            let error = match timeout(remaining_time, observe_update).await {
-                Ok(Ok(())) => None,
-                Ok(Err(e)) => Some(e),
-                Err(e) => Some(anyhow::anyhow!(e.to_string())),
-            };
+            let error = observe_with_stage_timeout(remaining_time, stage, observe_update)
+                .await
+                .err();
 
             if let Some(e) = error {
                 error!("update validation failed: {e:#}");
@@ -300,6 +391,113 @@ mod tests {
     use super::*;
 
     use crate::bootloader_env::TEST_LOCK as BOOTARGS_TEST_LOCK;
+
+    const TEST_TIMEOUT: Duration = Duration::from_millis(50);
+
+    // run into the timeout while the given stage is pending and return what the
+    // reboot reason would report
+    async fn timeout_message_for(stage: ValidationStage) -> String {
+        let tracker = StageTracker::new();
+        let observe_stage = tracker.clone();
+        let pending = async move {
+            observe_stage.set(stage);
+            std::future::pending::<()>().await;
+            Ok(())
+        };
+
+        observe_with_stage_timeout(TEST_TIMEOUT, tracker, pending)
+            .await
+            .expect_err("expected a timeout")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn timeout_reports_pending_authentication() {
+        assert_eq!(
+            timeout_message_for(ValidationStage::Authentication).await,
+            "timeout waiting for authentication"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_reports_pending_system_health() {
+        assert_eq!(
+            timeout_message_for(ValidationStage::SystemHealth).await,
+            "timeout waiting for system health"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_reports_pending_adu_agent_enable() {
+        assert_eq!(
+            timeout_message_for(ValidationStage::EnableAduAgent).await,
+            "timeout enabling adu agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_reports_pending_finalize() {
+        assert_eq!(
+            timeout_message_for(ValidationStage::Finalize).await,
+            "timeout finalizing update"
+        );
+    }
+
+    #[tokio::test]
+    async fn without_timeout_the_observed_result_is_kept() {
+        let tracker = StageTracker::new();
+        let err = observe_with_stage_timeout(TEST_TIMEOUT, tracker, async {
+            anyhow::bail!("some validation error")
+        })
+        .await
+        .expect_err("expected the observed error");
+
+        assert_eq!(err.to_string(), "some validation error");
+    }
+
+    #[test]
+    fn stage_tracker_starts_at_authentication() {
+        assert_eq!(StageTracker::new().get(), ValidationStage::Authentication);
+    }
+
+    #[test]
+    fn unknown_stage_value_falls_back_to_authentication() {
+        assert_eq!(
+            ValidationStage::from_u8(ValidationStage::Finalize as u8 + 1),
+            ValidationStage::Authentication
+        );
+    }
+
+    #[test]
+    fn health_deadline_keeps_margin_to_validation_timeout() {
+        let remaining = Duration::from_secs(UPDATE_VALIDATION_TIMEOUT_IN_SECS_DEFAULT);
+        assert_eq!(
+            health_deadline(remaining),
+            remaining - Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS)
+        );
+    }
+
+    #[test]
+    fn health_deadline_without_slack_is_zero() {
+        assert_eq!(
+            health_deadline(Duration::from_secs(SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS)),
+            Duration::ZERO
+        );
+        assert_eq!(health_deadline(Duration::ZERO), Duration::ZERO);
+    }
+
+    // a low configured timeout must not produce a deadline beyond it, else the
+    // generic timeout wins the race and the reboot reason loses the cause
+    #[test]
+    fn health_deadline_never_exceeds_remaining_time() {
+        for secs in [1, 10, SYSTEM_HEALTHY_DEADLINE_MARGIN_IN_SECS, 90, 1200] {
+            let remaining = Duration::from_secs(secs);
+            assert!(
+                health_deadline(remaining) < remaining || remaining.is_zero(),
+                "deadline for {secs}s remaining is not shorter than the remaining time"
+            );
+        }
+    }
 
     #[test]
     fn finalize_bootargs_noargs_sentinel_unsets_both_keys() {

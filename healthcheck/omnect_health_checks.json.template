@@ -76,6 +76,10 @@
 	"type": "system_running"
     },
     {
+	"name": "crash_loop",
+	"type": "crash_loop"
+    },
+    {
 	"name": "timesync",
 	"type": "timesync"
     }

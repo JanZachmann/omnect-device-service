@@ -9,7 +9,9 @@ After flashing an update to the new root partition, the device boots this partit
 The following checks must be passed in order to successfully validate an update:
 
 - omnect-device-service.service status is in state [running](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html#status%20PATTERN%E2%80%A6%7CPID%E2%80%A6%5D)
-- system is in state [running](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html#is-system-running)
+- system is in state [running](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html#is-system-running) and no service is in a crash loop
+  (repeatedly restarting without staying active); a `degraded` system
+  state fails the validation
 - in case local update is **NOT** [configured](#local-validation)
   - adu-agent could be started successfully
   - omnect-device-service is connected to iothub (successfully provisioned)
@@ -41,10 +43,41 @@ The following checks must be passed in order to successfully validate an update:
 - timeout used internally by omnect-device-service
 - the timeout is canceled as soon as initialization completed and (if configured) iothub connection is established
 
+#### System health deadline
+
+- the system state is polled until the deadline, which is the remaining
+  validation time minus a safety margin; healthy and unhealthy both need several
+  observations, so a single poll landing in a restart window decides nothing
+- a service in a restart cycle below the crash loop threshold keeps the check
+  polling, since it can still reach the threshold
+- before the deadline a verdict needs consecutive observations of one kind
+- a failed poll is no observation: the wait keeps polling and only gives up when
+  the same number of polls fails in a row. If the deadline comes first and no poll
+  ever succeeded, validation fails without a system state to report
+- at the deadline all unhealthy observations of the wait count, consecutive or
+  not: validation fails once they reach the same number, or if no poll was
+  healthy at all. The reported cause is the one with the most observations
+- otherwise one healthy observation is enough to succeed, whatever the last poll
+  saw, because a rollback needs evidence
+- without any healthy observation the last one decides: a system that is still
+  starting fails, a restart pending below the threshold succeeds
+- when the remaining validation time is at or below the safety margin the
+  deadline is zero. The first observation then decides by the rules above, and
+  since no poll was healthy yet a single unhealthy one fails the validation
+- on a failed validation the reboot reason `swupdate-validation-failed` is
+  logged with the cause as extra info: the failed units, the crash-looping
+  units, the last system state, or why the polls failed
+
 #### Global timeout
 
 - defined in [update-validation-observer.timer](../../../systemd/update-validation-observer.timer)
 - reboots the system if /run/omnect-device-service/omnect_validate_update isn't deleted by omnect-device-service in time
+
+### Crash loop detection
+
+- configurable via environment variable `CRASH_LOOP_RESTART_THRESHOLD` (default 3, must be >= 1)
+- a unit counts as crash-looping after this many restarts while it is still in a
+  restart cycle
 
 ### Local validation
 

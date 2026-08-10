@@ -1,5 +1,6 @@
 # note: use /usr/bin/fw_setenv_no_script.sh wrapper instead of fw_setenv for setting.
-#       it checks if the value string includes script parameters
+#       it ends option parsing and rejects anything other than exactly two
+#       arguments, so key and value can never become fw_setenv options
 
 # factory reset
 # warning: using a wildcard here; options: use regex or multiple occurrences of the call with different possible input
