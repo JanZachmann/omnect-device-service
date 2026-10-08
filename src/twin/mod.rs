@@ -43,6 +43,9 @@ use tokio::{select, sync::mpsc, task::JoinHandle};
 use tokio_stream::wrappers::{IntervalStream, ReceiverStream};
 use tokio_util::sync::CancellationToken;
 
+const CREATE_CLIENT_RETRY_DELAY: time::Duration = time::Duration::from_secs(10);
+const RECONNECT_CLIENT_DELAY: time::Duration = time::Duration::from_secs(1);
+
 #[derive(PartialEq)]
 enum TwinState {
     Uninitialized,
@@ -395,7 +398,7 @@ impl Twin {
 
         // statuses still queued come from the dropped client and must not reach the next one
         while let Ok(status) = rx_connection_status.try_recv() {
-            debug!("reset_client: drop stale connection status {status:?}");
+            info!("reset_client: drop stale connection status {status:?}");
         }
     }
 
@@ -517,7 +520,7 @@ impl Twin {
                             twin.request_validate_update(false).await?;
                             twin.reset_client_with_delay(
                                 &mut rx_connection_status,
-                                Some(time::Duration::from_secs(10)),
+                                Some(CREATE_CLIENT_RETRY_DELAY),
                             ).await;
                             client_created.set(Self::connect_iothub_client(&client_builder));
                         }
@@ -527,7 +530,7 @@ impl Twin {
                     if twin.handle_connection_status(status).await? {
                         twin.reset_client_with_delay(
                             &mut rx_connection_status,
-                            Some(time::Duration::from_secs(1)),
+                            Some(RECONNECT_CLIENT_DELAY),
                         ).await;
                         client_created.set(Self::connect_iothub_client(&client_builder));
                     };

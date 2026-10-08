@@ -752,44 +752,44 @@ pub mod mod_test {
     async fn reset_client_drops_stale_connection_status_test() {
         let test_files = vec!["testfiles/positive/os-release"];
 
-        let expect = |mock: &mut MockMyIotHub| {
-            mock.expect_twin_report().returning(|_| Ok(()));
-            mock.expect_shutdown().times(1).returning(|_| ());
-        };
-
         let test = |test_attr: &mut TestConfig| {
             let (tx, mut rx) = mpsc::channel(100);
             tx.try_send(AuthenticationStatus::Unauthenticated(
                 UnauthenticatedReason::CommunicationError,
             ))
             .expect("send CommunicationError");
-            tx.try_send(AuthenticationStatus::Authenticated)
-                .expect("send Authenticated");
+
+            // the old client still reports Authenticated while it shuts down
+            test_attr
+                .twin
+                .client
+                .as_mut()
+                .expect("client present")
+                .expect_shutdown()
+                .times(1)
+                .returning(move |_| {
+                    tx.try_send(AuthenticationStatus::Authenticated)
+                        .expect("send Authenticated");
+                });
 
             block_on(test_attr.twin.reset_client_with_delay(&mut rx, None));
 
+            let client_dropped = test_attr.twin.client.is_none();
+            test_attr.twin.client = Some(MockMyIotHub::default());
+
+            assert!(client_dropped, "reset must drop the iot hub client");
             assert!(
-                test_attr.twin.client.is_none(),
-                "reset must drop the iot hub client"
-            );
-            assert_eq!(
-                rx.try_recv(),
-                Err(mpsc::error::TryRecvError::Empty),
-                "reset must drop queued connection statuses"
+                rx.try_recv().is_err(),
+                "reset must drop connection statuses of the old client"
             );
         };
 
-        TestCase::run(test_files, vec![], vec![], expect, test);
+        TestCase::run(test_files, vec![], vec![], |_| {}, test);
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn reset_client_without_client_drops_stale_connection_status_test() {
         let test_files = vec!["testfiles/positive/os-release"];
-
-        let expect = |mock: &mut MockMyIotHub| {
-            mock.expect_twin_report().returning(|_| Ok(()));
-            mock.expect_shutdown().never();
-        };
 
         let test = |test_attr: &mut TestConfig| {
             let client = test_attr.twin.client.take();
@@ -798,16 +798,16 @@ pub mod mod_test {
                 .expect("send Authenticated");
 
             block_on(test_attr.twin.reset_client_with_delay(&mut rx, None));
+            test_attr.twin.client = client;
 
             assert_eq!(
                 rx.try_recv(),
                 Err(mpsc::error::TryRecvError::Empty),
                 "reset must drop queued connection statuses"
             );
-            test_attr.twin.client = client;
         };
 
-        TestCase::run(test_files, vec![], vec![], expect, test);
+        TestCase::run(test_files, vec![], vec![], |_| {}, test);
     }
 
     #[tokio::test(flavor = "multi_thread")]
