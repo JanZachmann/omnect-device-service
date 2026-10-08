@@ -377,7 +377,11 @@ impl Twin {
         info!("twin shutdown complete");
     }
 
-    async fn reset_client_with_delay(&mut self, timeout: Option<time::Duration>) {
+    async fn reset_client_with_delay(
+        &mut self,
+        rx_connection_status: &mut mpsc::Receiver<AuthenticationStatus>,
+        timeout: Option<time::Duration>,
+    ) {
         if let Some(client) = self.client.as_mut() {
             info!("reset_client: shutdown iotclient");
             client.shutdown(Duration::from_secs(5)).await;
@@ -387,6 +391,11 @@ impl Twin {
         if let Some(t) = timeout {
             info!("reset_client: sleep for {}ms", t.as_millis());
             tokio::time::sleep(t).await;
+        }
+
+        // statuses still queued come from the dropped client and must not reach the next one
+        while let Ok(status) = rx_connection_status.try_recv() {
+            debug!("reset_client: drop stale connection status {status:?}");
         }
     }
 
@@ -506,14 +515,20 @@ impl Twin {
                         Err(e) => {
                             error!("couldn't create iothub client: {e:#}");
                             twin.request_validate_update(false).await?;
-                            twin.reset_client_with_delay(Some(time::Duration::from_secs(10))).await;
+                            twin.reset_client_with_delay(
+                                &mut rx_connection_status,
+                                Some(time::Duration::from_secs(10)),
+                            ).await;
                             client_created.set(Self::connect_iothub_client(&client_builder));
                         }
                     }
                 },
                 Some(status) = rx_connection_status.recv() => {
                     if twin.handle_connection_status(status).await? {
-                        twin.reset_client_with_delay(Some(time::Duration::from_secs(1))).await;
+                        twin.reset_client_with_delay(
+                            &mut rx_connection_status,
+                            Some(time::Duration::from_secs(1)),
+                        ).await;
                         client_created.set(Self::connect_iothub_client(&client_builder));
                     };
                 },
