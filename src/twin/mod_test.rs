@@ -811,6 +811,33 @@ pub mod mod_test {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn connection_status_without_client_is_ignored_test() {
+        let test_files = vec!["testfiles/positive/os-release"];
+
+        let test = |test_attr: &mut TestConfig| {
+            let client = test_attr.twin.client.take();
+
+            let result = block_on(
+                test_attr
+                    .twin
+                    .handle_connection_status(AuthenticationStatus::Authenticated),
+            );
+            test_attr.twin.client = client;
+
+            assert!(
+                !result.expect("status without client must not fail"),
+                "status without client must not restart the client"
+            );
+            assert!(
+                test_attr.twin.state != TwinState::Authenticated,
+                "status without client must not change the twin state"
+            );
+        };
+
+        TestCase::run(test_files, vec![], vec![], |_| {}, test);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn update_and_report_general_consent_failed_test() {
         let test_files = vec![
             "testfiles/positive/os-release",

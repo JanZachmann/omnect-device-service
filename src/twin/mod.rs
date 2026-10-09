@@ -204,6 +204,11 @@ impl Twin {
         &mut self,
         auth_status: AuthenticationStatus,
     ) -> Result<bool> {
+        if self.client.is_none() {
+            info!("ignore connection status {auth_status:?} since client not present");
+            return Ok(false);
+        }
+
         let mut restart_twin = false;
         match auth_status {
             AuthenticationStatus::Authenticated => {
