@@ -296,8 +296,8 @@ The result format is defined by [omnect-os-init](https://github.com/omnect/omnec
 
 - `status`: `0` success, `1` invalid request, `2` error, `3` configuration error, `4` warning (reset succeeded, but a partition needed a second format attempt). A status code unknown to the service is reported as `4294967295`.
 - `error` and `context` are `null` unless the reset reported a problem.
-- `paths` lists the preserved paths.
-- `data_wiped` is `true` once the reset started wiping data; on `status` `2` it distinguishes a safe abort from a failure after data was already wiped.
+- `paths`: the configured paths to preserve, not the ones actually restored; empty when the reset stopped before it changed `etc` and `data`.
+- `data_wiped`: `true` once the reset started to change `etc` and `data`. With `status` `2`, `false` means nothing was changed; `true` means data may already be lost.
 
 ### iot-hub-device-update user consent
 

@@ -1,6 +1,7 @@
 {
     "factory_reset": {
         "status": "wrong",
-        "error": "format"
+        "error": "format",
+        "data_wiped": false
     }
 }

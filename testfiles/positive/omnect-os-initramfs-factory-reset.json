@@ -1,6 +1,9 @@
 {
     "factory_reset": {
         "status": 0,
+        "paths": [
+            "/etc/omnect/factory-reset.d/"
+        ],
         "data_wiped": true
     },
     "first_boot": false

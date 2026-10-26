@@ -438,7 +438,7 @@ pub mod mod_test {
                             "context": null,
                             "data_wiped": true,
                             "error": null,
-                            "paths": [],
+                            "paths": ["/etc/omnect/factory-reset.d/"],
                             "status": 0,
                         },
                     }

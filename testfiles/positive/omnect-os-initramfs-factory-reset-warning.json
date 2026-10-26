@@ -1,9 +1,12 @@
 {
     "factory_reset": {
         "status": 4,
-        "context": "reformat retried for: data",
+        "context": "data reformatted twice",
         "paths": [
-            "network"
+            "/etc/omnect/factory-reset.d/",
+            "/etc/NetworkManager/system-connections/",
+            "/etc/systemd/network/",
+            "/etc/wpa_supplicant.conf"
         ],
         "data_wiped": true
     },
