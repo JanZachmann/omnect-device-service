@@ -1,0 +1,9 @@
+{
+  "factory_reset": {
+    "status": 2,
+    "error": "mkfs.ext4 failed for data",
+    "context": "data:reformat",
+    "data_wiped": true
+  },
+  "first_boot": false
+}

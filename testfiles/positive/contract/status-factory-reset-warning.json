@@ -1,0 +1,12 @@
+{
+  "factory_reset": {
+    "status": 4,
+    "error": "restore of /etc/hostname failed",
+    "context": "etc/hostname:restore",
+    "paths": [
+      "/etc/hostname"
+    ],
+    "data_wiped": true
+  },
+  "first_boot": false
+}

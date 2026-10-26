@@ -264,9 +264,11 @@ impl FactoryReset {
     }
 
     fn factory_reset_result() -> FactoryResetResultState {
-        let path = result_path!();
+        Self::factory_reset_result_from(&result_path!())
+    }
 
-        let omnect_os_initramfs_json: serde_json::Value = match from_json_file(&path) {
+    fn factory_reset_result_from(path: &str) -> FactoryResetResultState {
+        let omnect_os_initramfs_json: serde_json::Value = match from_json_file(path) {
             Ok(json) => json,
             Err(e) => {
                 error!("factory reset: cannot read result: {e:#}");
@@ -542,6 +544,92 @@ mod tests {
             FactoryReset::factory_reset_result(),
             FactoryResetResultState::NoReset
         );
+    }
+
+    // the files in testfiles/positive/contract are copies of the factory reset
+    // results that omnect-os-init writes; keep them in sync with its tests/contract
+    #[test]
+    fn factory_reset_contract_files_test() {
+        let result =
+            |status, error: Option<&str>, context: Option<&str>, paths: &[&str], data_wiped| {
+                FactoryResetResult {
+                    status,
+                    error: error.map(str::to_string),
+                    context: context.map(str::to_string),
+                    paths: paths.iter().map(|p| p.to_string()).collect(),
+                    data_wiped,
+                }
+            };
+
+        for (name, expected) in [
+            (
+                "success",
+                result(
+                    FactoryResetStatus::Success,
+                    None,
+                    None,
+                    &["/etc/hostname"],
+                    true,
+                ),
+            ),
+            (
+                "invalid",
+                result(
+                    FactoryResetStatus::Invalid,
+                    Some("unknown factory reset mode 7"),
+                    None,
+                    &[],
+                    false,
+                ),
+            ),
+            (
+                "error-before-wipe",
+                result(
+                    FactoryResetStatus::Error,
+                    Some("backup of /etc/hostname failed"),
+                    None,
+                    &[],
+                    false,
+                ),
+            ),
+            (
+                "error-after-wipe",
+                result(
+                    FactoryResetStatus::Error,
+                    Some("mkfs.ext4 failed for data"),
+                    Some("data:reformat"),
+                    &[],
+                    true,
+                ),
+            ),
+            (
+                "config-error",
+                result(
+                    FactoryResetStatus::ConfigError,
+                    Some("unknown preserve topic foo"),
+                    None,
+                    &[],
+                    false,
+                ),
+            ),
+            (
+                "warning",
+                result(
+                    FactoryResetStatus::Warning,
+                    Some("restore of /etc/hostname failed"),
+                    Some("etc/hostname:restore"),
+                    &["/etc/hostname"],
+                    true,
+                ),
+            ),
+        ] {
+            let file = format!("testfiles/positive/contract/status-factory-reset-{name}.json");
+            assert_eq!(
+                FactoryReset::factory_reset_result_from(&file),
+                FactoryResetResultState::Reported(expected),
+                "{file}"
+            );
+        }
     }
 
     #[test]
