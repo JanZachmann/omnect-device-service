@@ -596,9 +596,9 @@ mod tests {
                 "error-after-wipe",
                 result(
                     FactoryResetStatus::Error,
-                    Some("mkfs.ext4 failed for data"),
-                    Some("data:reformat"),
-                    &[],
+                    Some("backup missing for /etc/hostname"),
+                    Some("etc/hostname:missing-backup"),
+                    &["/etc/hostname"],
                     true,
                 ),
             ),
@@ -616,8 +616,8 @@ mod tests {
                 "warning",
                 result(
                     FactoryResetStatus::Warning,
-                    Some("restore of /etc/hostname failed"),
-                    Some("etc/hostname:restore"),
+                    None,
+                    Some("data reformatted twice"),
                     &["/etc/hostname"],
                     true,
                 ),

@@ -1,8 +1,7 @@
 {
   "factory_reset": {
     "status": 4,
-    "error": "restore of /etc/hostname failed",
-    "context": "etc/hostname:restore",
+    "context": "data reformatted twice",
     "paths": [
       "/etc/hostname"
     ],
