@@ -88,3 +88,5 @@ In `/var/lib/omnect-device-service/update_validation_conf.json` it can be config
   "local": true
 }
 ```
+
+A local update writes the file right before the reboot into the validation boot, and ods deletes it after the validation. omnect-os-init deletes the file on every boot without update validation, so a file written by hand is gone after the next reboot.
