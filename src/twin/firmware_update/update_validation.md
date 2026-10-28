@@ -81,7 +81,7 @@ The following checks must be passed in order to successfully validate an update:
 
 ### Local validation
 
-In `/var/lib/omnect-device-service/update_validation_conf.json` it can be configured, if the update validation happens in a local environment, where no connection to the iothub is present. (if the file doesn't exist `"local": false` is assumed):
+`/var/lib/omnect-device-service/update_validation_conf.json` tells if the update validation happens in a local environment, where no connection to the iothub is present (if the file doesn't exist `"local": false` is assumed):
 
 ```json
 {
