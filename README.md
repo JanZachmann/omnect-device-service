@@ -294,10 +294,12 @@ The result format is defined by [omnect-os-init](https://github.com/omnect/omnec
 }
 ```
 
-- `status`: `0` success, `1` invalid request, `2` error, `3` configuration error, `4` warning (reset succeeded, but a partition needed a second format attempt). A status code unknown to the service is reported as `4294967295`.
+- `status`: `0` success, `1` invalid request, `2` error, `3` configuration error, `4` warning (reset succeeded, but a partition needed a second format attempt). A status code unknown to the service is reported as it is. A status that is no `u32` (e.g. `-1`) makes the whole result unusable: it is reported as `null`.
 - `error` and `context` are `null` unless the reset reported a problem.
 - `paths`: the configured paths to preserve, not the ones actually restored; empty when the reset stopped before it changed `etc` and `data`.
 - `data_wiped`: `true` once the reset started to change `etc` and `data`. With `status` `2`, `false` means nothing was changed; `true` means data may already be lost.
+
+The service reports a result only on the boot after a reset; on other boots the twin keeps the last result. So after an update from a version below feature version 4 without a reset, the twin can still hold a result in the old format, without `data_wiped`.
 
 ### iot-hub-device-update user consent
 
