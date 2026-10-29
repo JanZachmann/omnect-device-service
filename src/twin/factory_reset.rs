@@ -388,7 +388,7 @@ mod tests {
                     preserve: vec!["foo".to_string()],
                 }))
                 .await
-                .unwrap_err()
+                .expect_err("unknown preserve topic must fail")
                 .chain()
                 .any(|e| e
                     .to_string()
@@ -405,7 +405,7 @@ mod tests {
                 ],
             }))
             .await
-            .unwrap();
+            .expect("factory reset command");
 
         let (tx_reported_properties, mut rx_reported_properties) = tokio::sync::mpsc::channel(100);
         let (tx_outgoing_message, mut _rx_outgoing_message) = tokio::sync::mpsc::channel(100);
@@ -413,12 +413,16 @@ mod tests {
         factory_reset
             .connect_twin(tx_reported_properties, tx_outgoing_message)
             .await
-            .unwrap();
+            .expect("connect_twin");
 
         let reported: FactoryResetResult = serde_json::from_value(
-            rx_reported_properties.recv().await.unwrap()["factory_reset"]["result"].clone(),
+            rx_reported_properties
+                .recv()
+                .await
+                .expect("reported properties")["factory_reset"]["result"]
+                .clone(),
         )
-        .unwrap();
+        .expect("parse reported result");
 
         assert_eq!(
             reported,
@@ -440,12 +444,12 @@ mod tests {
         );
         assert!(
             FactoryReset::factory_reset_keys()
-                .unwrap_err()
+                .expect_err("missing config must fail")
                 .to_string()
                 .starts_with("failed to open for read: ")
         );
 
-        let tmp_dir = tempfile::tempdir().unwrap();
+        let tmp_dir = tempfile::tempdir().expect("create temp dir");
         let file_path = tmp_dir.path().join("factory-reset.json");
         crate::common::set_env_var("FACTORY_RESET_CONFIG_FILE_PATH", file_path.clone());
 
@@ -453,20 +457,20 @@ mod tests {
             "testfiles/positive/factory-reset.json",
             file_path.clone().as_path(),
         )
-        .unwrap();
+        .expect("copy config");
 
         assert!(
             FactoryReset::factory_reset_keys()
-                .unwrap_err()
+                .expect_err("missing custom config dir must fail")
                 .to_string()
                 .starts_with("read factory-reset.d")
         );
 
         let custom_dir_path = tmp_dir.path().join("factory-reset.d");
-        std::fs::create_dir(custom_dir_path.clone()).unwrap();
+        std::fs::create_dir(custom_dir_path.clone()).expect("create custom dir");
         crate::common::set_env_var("FACTORY_RESET_CUSTOM_CONFIG_DIR_PATH", custom_dir_path);
 
-        FactoryReset::factory_reset_keys().unwrap();
+        FactoryReset::factory_reset_keys().expect("factory_reset_keys");
     }
 
     #[test]
