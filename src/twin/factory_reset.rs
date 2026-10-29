@@ -292,17 +292,19 @@ impl FactoryReset {
     }
 
     fn factory_reset_result_from(path: &str) -> FactoryResetResultState {
-        let omnect_os_initramfs_json: serde_json::Value = match from_json_file(path) {
-            Ok(json) => json,
-            Err(e) => {
-                error!("factory reset: cannot read result: {e:#}");
-                return FactoryResetResultState::Unusable;
-            }
-        };
+        let omnect_os_initramfs_json: serde_json::Map<String, serde_json::Value> =
+            match from_json_file(path) {
+                Ok(json) => json,
+                Err(e) => {
+                    error!("factory reset: cannot read result: {e:#}");
+                    return FactoryResetResultState::Unusable;
+                }
+            };
 
-        let raw = &omnect_os_initramfs_json["factory_reset"];
-
-        if raw.is_null() {
+        let Some(raw) = omnect_os_initramfs_json
+            .get("factory_reset")
+            .filter(|raw| !raw.is_null())
+        else {
             if omnect_os_initramfs_json
                 .get("factory-reset")
                 .is_some_and(|legacy| !legacy.is_null())
@@ -312,7 +314,7 @@ impl FactoryReset {
             }
             debug!("factory reset: no result");
             return FactoryResetResultState::NoReset;
-        }
+        };
 
         let result = match FactoryResetResult::deserialize(raw) {
             Ok(result) => result,
@@ -472,6 +474,9 @@ mod tests {
         for file in [
             "",
             "testfiles/negative/omnect-os-initramfs-truncated.json",
+            "testfiles/negative/omnect-os-initramfs-array.json",
+            "testfiles/negative/omnect-os-initramfs-string.json",
+            "testfiles/negative/omnect-os-initramfs-null.json",
             "testfiles/negative/omnect-os-initramfs-factory-reset-format.json",
             "testfiles/negative/omnect-os-initramfs-factory-reset-no-status.json",
             "testfiles/negative/omnect-os-initramfs-factory-reset-negative-status.json",
