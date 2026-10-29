@@ -885,7 +885,7 @@ The web service features is enabled by default and can be explicitly deactivated
 
 ### Factory reset
 
-Description [Factory reset](#factory-reset).
+Description [Factory reset](#factory-reset). `mode` and `preserve` are checked as described in [Trigger factory reset](#trigger-factory-reset).
 
 ```bash
 curl -X POST --unix-socket /run/omnect-device-service/api.sock http://localhost/factory-reset/v1 ---data-raw '
@@ -945,7 +945,7 @@ omnect-device-service is capable to publish certain properties to a list of defi
 - online status: connection status to iothub
 - info: software versions of various components and device boot timestamp
 - timeouts: currently configured [wait-online-timeout](https://www.freedesktop.org/software/systemd/man/latest/systemd-networkd-wait-online.service.html)
-- factory-reset: if there was a factory-reset in previous boot, the result is published
+- factory-reset: the [preserve keys](#supported-preserve-keys), and the result if there was a factory-reset in previous boot. The result has the format of [Report factory reset result](#report-factory-reset-result). On a later boot no result is published, while the twin keeps the last one.
 - network status: network adapter and its current configuration (LTE modems are currently not included). The reported structure is equal to [Current reported network status](#current-reported-network-status)
 - firmware update validation status: result of a local firmware update
 - fleet id the device belongs to
