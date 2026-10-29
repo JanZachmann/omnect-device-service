@@ -254,7 +254,7 @@ Result:
 
 The supported reset `mode` and the documentation in general can be found in the [omnect-os-init docs](https://github.com/omnect/omnect-os-init/blob/main/docs/usage.md#factory-reset).
 
-The **mandatory** `preserve` array lists the settings that are restored after the device storage is wiped; an empty array keeps nothing but `/etc/omnect/factory-reset.d/`. A payload without `preserve` is rejected. Supported keys are the [preserve topics](https://github.com/omnect/omnect-os-init/blob/main/docs/usage.md#preserve-topics).
+The **mandatory** `preserve` array lists the settings that are restored after the device storage is wiped; an empty array keeps nothing but `/etc/omnect/factory-reset.d/`. A payload without `preserve` is rejected. Only the reported [keys](#supported-preserve-keys) are accepted: the keys of `/etc/omnect/factory-reset.json` on the device, and `applications` if `/etc/omnect/factory-reset.d/` holds a valid custom configuration. Any other key is rejected. The [preserve topics](https://github.com/omnect/omnect-os-init/blob/main/docs/usage.md#preserve-topics) describe what each key restores.
 
 In case the method was successful received by the module the return value of the method looks like this:
 
